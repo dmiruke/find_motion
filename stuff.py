@@ -21,13 +21,15 @@ DONE: minimum length of motion before we think it is motion
 
 DONE: multiprocessing with a Pool
 
-TODO: deal well with KeyboardInterrupt when multiprocess. Wherever we are, fail in a way that kills the pool as a whole
+DONE: deal well with KeyboardInterrupt when multiprocess. Wherever we are, fail in a way that kills the pool as a whole
     tried using a metaclass to decorate each method of the class, but that's not working
+    managed to block SIGINT in workers and use apply_async and a loop to check if workers were complete, which allows neat ctrl-c behaviour
+    at the expense of ugly code.
 
 DONE: keep track of which files have processed in a dot file in the directory, allow resuming, skipping those
     already doing log.debug(), start to write to a file, and then read that file on resume
 
-TODO: progress bar with ProgressBar2 module - one per file, and one for the whole run
+DONE: progress bar with ProgressBar2 module - one for the whole run
 
 DONE: sort input files by date, process in time order. Change sets to orderedset.
 
@@ -35,11 +37,13 @@ TODO: nicer way to specify filtered areas
 
 TODO: return flag to say if the file completed without error, or was user interrupted (q or ctrl-c), or had an exception of some kind
 
-TODO: logging in the workers - they should each create a logger and pass messages somehow to the master (does multiprocessing disable STDERR?)
+TODO: logging in the workers - they should pass messages to the master on completion - override log and write output to master in a list
 
 DONE: imap_async, so that master gets results as they arrive, not once the whole job has completed, so that progress.log gets written to
 
-TODO: allow pausing... somehow?
+TODO: report different status if 'q' gets pressed to interrupt a video
+
+TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
 """
 
 import cv2
@@ -50,6 +54,8 @@ from orderedset import OrderedSet
 from functools import partial, wraps
 import math
 from multiprocessing import Pool
+import signal
+import time
 import sys
 import os
 import logging
@@ -61,6 +67,10 @@ log.setLevel(logging.INFO)
 LINE_BUFFERED = 1
 BLACK = (0,0,0)
 GREEN = (0,255,0)
+
+
+def init_worker():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 def catch_exception(f):
@@ -84,7 +94,7 @@ class ErrorCatcher(type):
 
 
 class VideoMotion(object):
-    __metaclass__ = ErrorCatcher
+    #__metaclass__ = ErrorCatcher
 
     def __init__(self, filename=None, outdir=None, fps=30, box_size=100, cache_frames=60, min_movement_frames=5, delta_thresh=7, avg=0.1, mask_areas=None, show=False, codec='MJPG', log_level=logging.INFO):
         self.filename = filename
@@ -329,12 +339,14 @@ class VideoMotion(object):
         
         self.cleanup()
 
+        return self.wrote_frames
+
 
 class VideoFrame(object):
     """
     encapsulate frame stuff here, out of main video class
     """
-    __metaclass__ = ErrorCatcher
+    #__metaclass__ = ErrorCatcher
 
     def __init__(self, frame):
         self.frame = frame
@@ -383,8 +395,8 @@ def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_l
     Video creater and runner funnction to pass to multiprocessing pool
     """
     vid = VideoMotion(filename=filename, outdir=outdir, mask_areas=mask_areas, show=show, codec=codec, log_level=log_level)
-    vid.find_motion()
-    return filename
+    err = vid.find_motion()
+    return (err, filename)
 
 
 class DummyProgressBar(object):
@@ -409,7 +421,9 @@ def main(args):
         log.debug('Not repeating {} files'.format(len(done_files)))
         files.difference_update(done_files)
 
-    log.debug('Processing {} files'.format(len(files)))
+    num_files = len(files)
+
+    log.debug('Processing {} files'.format(num_files))
 
     done = 0
 
@@ -421,17 +435,37 @@ def main(args):
             run = partial(run_vid, outdir=args.output_dir, mask_areas=MASK_AREAS, show=args.show, codec=args.codec, log_level=logging.DEBUG if args.debug else logging.INFO)
 
             if args.processes > 1:
-                pool = Pool(processes=args.processes)
-                files_processed = pool.map_async(run, files).get()
+                results = []
+                try:
+                    pool = Pool(processes=args.processes, initializer=init_worker)
+                    for filename in files:
+                        results.append(pool.apply_async(run, (filename,)))
+                    while True:
+                        num_done = [r.ready() for r in results].count(True)
+                        if num_done > done:
+                            done = num_done
+                            bar.update(done)
+                        if num_done == num_files:
+                            log.debug("All processes completed")
+                            break
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    log.warning('Ending processing at user request')
+                    pool.terminate()
+                for r in results:
+                    if r.ready():
+                        status, filename = r.get()
+                        log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+                        print(filename, file=progress_log)
             else:
                 files_processed = map(run, files)
 
-            for filename in files_processed:
-                if bar is not None:
-                    done += 1
-                    bar.update(done)
-                log.debug('Done {}'.format(filename))
-                print(filename, file=progress_log)
+                for status, filename in files_processed:
+                    if bar is not None:
+                        done += 1
+                        bar.update(done)
+                    log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+                    print(filename, file=progress_log)
 
 
 def get_args(parser):
