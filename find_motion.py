@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 # pylint: disable=line-too-long,logging-format-interpolation,no-member
-# pylint: disable=too-many-instance-attributes,too-many-arguments
 
 """
 Motion detection with OpenCV
@@ -13,6 +12,7 @@ Caches images for a few frames before and after we detect movement
 
 TODO: deal with 2GB max file output size :-( in OpenCV
         catch Exception and open another file with a 1-up number
+        mostly dealt with using compression, but should still handle this
 
 DONE: spec an output folder, and an input folder
 
@@ -37,7 +37,7 @@ DONE: progress bar with ProgressBar2 module - one for the whole run
 
 DONE: sort input files by date, process in time order. Change sets to orderedset.
 
-TODO: nicer way to specify filtered areas
+TODO: nicer way to specify filtered areas, using literal_eval
 
 TODO: return flag to say if the file completed without error, or was user interrupted
     (q or ctrl-c), or had an exception of some kind
@@ -47,8 +47,6 @@ TODO: logging in the workers - they should pass messages to the master on comple
 
 DONE: imap_async, so that master gets results as they arrive, not once the whole job has completed,
     so that progress.log gets written to
-
-TODO: report different status if 'q' gets pressed to interrupt a video
 
 TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
 """
@@ -98,14 +96,12 @@ class VideoMotion(object):
     """
     Class to read in a video, detect motion in it, and write out just the motion to a new file
     """
+    # pylint: disable=too-many-instance-attributes,too-many-arguments
     def __init__(self, filename=None, outdir=None, fps=30,
                  box_size=100, cache_frames=60, min_movement_frames=5,
                  delta_thresh=7, avg=0.1, mask_areas=None, show=False,
                  codec='MJPG', log_level=logging.INFO):
         self.filename = filename
-
-        self.log = logging.getLogger(__name__)
-        self.log.setLevel(log_level)
 
         if self.filename is None:
             raise Exception('Filename required')
@@ -472,6 +468,7 @@ def find_files(directory):
     return OrderedSet([f[0] for f in sorted([(f, os.path.getmtime(f)) for f in files], key=lambda f: f[1])])
 
 
+# pylint: disable=too-many-arguments
 def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_level=None):
     """
     Video creater and runner funnction to pass to multiprocessing pool
@@ -480,7 +477,7 @@ def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_l
                       show=show, codec=codec, log_level=log_level)
     err = vid.find_motion()
     return (err, filename)
-
+# pylint: enable=too-many-arguments
 
 class DummyProgressBar(object):
     # pylint: disable=too-few-public-methods
