@@ -49,6 +49,12 @@ DONE: imap_async, so that master gets results as they arrive, not once the whole
     so that progress.log gets written to
 
 TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
+
+DONE: remove 'frame' processing - drawing box, adding text, etc. if we are not showing it - waste of time and memory. Just del self.frame etc. done with it.
+
+TODO: fix motion detection so we stop writing frames after movement goes away (seems broken at the moment)
+TODO: fix OutOfMemory problems? Can I catch that error and return that it happened, at least?
+TODO: fix progress output to file - why are filenames not being written as they are processed?
 """
 
 import os
@@ -198,6 +204,10 @@ class VideoMotion(object):
         small = imutils.resize(frame.raw, width=self.box_size)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         frame.blur = cv2.GaussianBlur(gray, self.gaussian, 0)
+        del small
+        del gray
+        if not self.show:
+            del frame.frame
 
 
     def read(self):
@@ -225,6 +235,7 @@ class VideoMotion(object):
         if self.outfile is None:
             self._make_outfile()
         self.outfile.write(frame.raw)
+        #frame.cleanup()
 
 
     def decide_output(self):
@@ -242,7 +253,8 @@ class VideoMotion(object):
 
                 self.frame_cache.clear()
             # draw the text
-            self.draw_text()
+            if self.show:
+                self.draw_text()
 
             self.output_frame()
         else:
@@ -316,9 +328,12 @@ class VideoMotion(object):
 
                 # compute the bounding box for the contour, draw it on the frame,
                 # and update the text
-                self.make_box(contour, frame)
+                if self.show:
+                    self.make_box(contour, frame)
                 self.movement_counter += 1
                 self.movement = True
+
+        del frame.contours
 
         if not self.movement:
             self.movement_counter = 0
@@ -383,7 +398,14 @@ class VideoMotion(object):
         if self.outfile is not None:
             self.outfile.release()
 
-        cv2.destroyAllWindows()
+        self.current_frame.cleanup()
+        del self.ref_frame
+        for frame in self.frame_cache:
+            frame.cleanup()
+        del self.frame_cache
+
+        if self.show:
+            cv2.destroyAllWindows()
         return
 
 
@@ -426,7 +448,6 @@ class VideoFrame(object):
     def __init__(self, frame):
         self.frame = frame
         self.raw = self.frame.copy()
-        self.tresh = None
         self.contours = None
         self.frame_delta = None
         self.thresh = None
@@ -445,6 +466,7 @@ class VideoFrame(object):
         Find the threshold of the diff
         """
         self.thresh = cv2.threshold(self.frame_delta, thresh, 255, cv2.THRESH_BINARY)[1]
+#        del self.frame_delta
 
 
     def find_contours(self):
@@ -458,6 +480,16 @@ class VideoFrame(object):
                                 cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if imutils.is_cv2() else cnts[1]
         self.contours = cnts
+
+
+    def cleanup(self):
+        """
+        Actively destroy the frame
+        """
+        for attr in ('frame', 'raw', 'thresh', 'contours', 'frame_delta', 'blur'):
+            if hasattr(self, attr):
+                delattr(self, attr)
+        del self
 
 
 def find_files(directory):
@@ -498,11 +530,13 @@ def get_progress(log_file):
     """
     Load the progress log file, get the list of files
     """
-    with open(log_file, 'r') as progress_log:
-        done_files = {f.strip() for f in progress_log.readlines()}
-        log.debug('Not repeating {} files'.format(len(done_files)))
-        return done_files
-
+    try:
+        with open(log_file, 'r') as progress_log:
+            done_files = {f.strip() for f in progress_log.readlines()}
+            return done_files
+    except FileNotFoundError:
+        log.debug('Did not find log file at {}'.format(log_file))
+        return []
 
 def run_pool(job=None, processes=2, files=None, pbar=None):
     """
