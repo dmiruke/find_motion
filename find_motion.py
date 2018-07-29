@@ -52,9 +52,25 @@ TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-m
 
 DONE: remove 'frame' processing - drawing box, adding text, etc. if we are not showing it - waste of time and memory. Just del self.frame etc. done with it.
 
-TODO: fix motion detection so we stop writing frames after movement goes away (seems broken at the moment)
-TODO: fix OutOfMemory problems? Can I catch that error and return that it happened, at least?
-TODO: fix progress output to file - why are filenames not being written as they are processed?
+DONE: fix motion detection so we stop writing frames after movement goes away (seems broken at the moment)
+    not sure what was wrong, seems to be working OK now
+
+DONE: fix OutOfMemory problems? Can I catch that error and return that it happened, at least?
+    I now aggressively del objects once they are done with, especially in the frame_cache - seems to have solved the memory leak
+TODO: now leaking VideoFrame objects somewhere - fix!!! XXX
+
+TODO: improve progress output so that filenames are being written as they are processed - keep track of which have been done in a set, and only write out if done
+
+TODO: add config using ConfigParser
+
+TODO: think about r/g/b channel motion detection, instead of just grayscale, or some kind of colour-change detection instead of just tone change - measure rgb on a linear scale, detect change of 'high' amount
+
+TODO: make frame_cache its own class so we can do cleanup etc. more neatly
+
+DONE: why it is so slooow now? Seems to have got slower than first version. Why? Is it the constant object deletion to avoid the memory leak?
+    it was running mem_top even when not in debug. Put boolean check round it.
+
+TODO: why is it not processing videos correctly now? It seems to just skip to the end.
 """
 
 import os
@@ -74,6 +90,7 @@ from multiprocessing import Pool
 import logging
 import progressbar
 
+from mem_top import mem_top
 from orderedset import OrderedSet
 
 import cv2
@@ -104,9 +121,9 @@ class VideoMotion(object):
     """
     # pylint: disable=too-many-instance-attributes,too-many-arguments
     def __init__(self, filename=None, outdir=None, fps=30,
-                 box_size=100, cache_frames=60, min_movement_frames=5,
+                 box_size=100, cache_time=2, min_movement_time=0.25,
                  delta_thresh=7, avg=0.1, mask_areas=None, show=False,
-                 codec='MJPG', log_level=logging.INFO):
+                 codec='MJPG', log_level=logging.INFO, mem=False):
         self.filename = filename
 
         if self.filename is None:
@@ -120,14 +137,18 @@ class VideoMotion(object):
 
         self.fps = fps
         self.box_size = box_size
-        self.cache_frames = cache_frames
-        self.min_movement_frames = min_movement_frames
+        self.cache_frames = int(cache_time * fps)
+        self.min_movement_frames = int(min_movement_time * fps)
         self.delta_thresh = delta_thresh
         self.avg = avg
         self.mask_areas = mask_areas if mask_areas is not None else []
         self.show = show
 
+        log.debug('Caching {} frames, min motion {} frames'.format(self.cache_frames, self.min_movement_frames))
+
         self.codec = codec
+        self.debug = log_level is logging.DEBUG
+        self.mem = mem
 
         log.debug(self.codec)
 
@@ -137,6 +158,11 @@ class VideoMotion(object):
         self.frame_height = 0
         self.scale = None
 
+        self.current_frame = None
+        self.ref_frame = None
+        self.frame_cache = None
+        self.wrote_frames = False
+
         self._calc_min_area()
         self._make_gaussian()
         self._load_video()
@@ -144,11 +170,6 @@ class VideoMotion(object):
         self.movement = False
         self.movement_decay = 0
         self.movement_counter = 0
-
-        self.current_frame = None
-        self.ref_frame = None
-        self.frame_cache = []
-        self.wrote_frames = False
 
 
     def _calc_min_area(self):
@@ -164,7 +185,7 @@ class VideoMotion(object):
         """
         self.cap = cv2.VideoCapture(self.filename)
         self.ref_frame = None
-        self.frame_cache = deque([], self.cache_frames)
+        self.frame_cache = deque(maxlen=self.cache_frames)
 
         self._get_video_info()
         self.scale = self.box_size / self.frame_width
@@ -180,7 +201,8 @@ class VideoMotion(object):
             self.outfile_name = os.path.join(self.outdir, os.path.basename(self.filename)) \
                                 + '_motion.avi'
 
-        log.debug("Writing to {}".format(self.outfile_name))
+        if self.debug:
+            log.debug("Writing to {}".format(self.outfile_name))
 
         self.outfile = cv2.VideoWriter(self.outfile_name,
                                        cv2.VideoWriter_fourcc(*self.codec),
@@ -206,8 +228,6 @@ class VideoMotion(object):
         frame.blur = cv2.GaussianBlur(gray, self.gaussian, 0)
         del small
         del gray
-        if not self.show:
-            del frame.frame
 
 
     def read(self):
@@ -231,25 +251,41 @@ class VideoMotion(object):
         frame = self.current_frame if frame is None else frame
         self.wrote_frames = True
         if self.show:
-            cv2.imshow('frame', imutils.resize(frame.frame, width=500))
+            cv2.imshow('frame', frame.frame) # imutils.resize(frame.frame, width=self.frame_width))
         if self.outfile is None:
             self._make_outfile()
         self.outfile.write(frame.raw)
-        #frame.cleanup()
+        #frame.cleanup
+
+
+    def output_raw_frame(self, frame=None):
+        """
+        Output a raw frame, not a VideoFrame
+        """
+        self.wrote_frames = True
+        if self.outfile is None:
+            self._make_outfile()
+        self.outfile.write(frame)
 
 
     def decide_output(self):
         """
         Decide if we are going to put out this frame
         """
+        log.debug('Deciding output')
+
         if (self.movement_counter >= self.min_movement_frames) or (self.movement_decay > 0):
+            log.debug('There is movement')
             # show cached frames
             if self.movement:
                 self.movement_decay = self.cache_frames
 
                 for frame in self.frame_cache:
                     if frame is not None:
-                        self.output_frame(frame)
+                        self.output_raw_frame(frame.raw)
+                        frame.in_cache = False
+                        frame.cleanup()
+                        del frame
 
                 self.frame_cache.clear()
             # draw the text
@@ -258,7 +294,19 @@ class VideoMotion(object):
 
             self.output_frame()
         else:
-            self.frame_cache.append(VideoFrame(self.current_frame.raw.copy()))
+            log.debug('No movement, putting in cache')
+            cache_size = len(self.frame_cache)
+            log.debug(cache_size)
+            if cache_size == self.cache_frames:
+                log.debug('Clearing first cache entry')
+                delete_frame = self.frame_cache.popleft()
+                if delete_frame is not None:
+                    delete_frame.in_cache = False
+                    delete_frame.cleanup()
+                    del delete_frame
+            log.debug('Putting frame onto cache')
+            self.frame_cache.append(self.current_frame)
+            self.current_frame.in_cache = True
 
 
     def is_open(self):
@@ -398,10 +446,18 @@ class VideoMotion(object):
         if self.outfile is not None:
             self.outfile.release()
 
+        self.current_frame.in_cache = False
         self.current_frame.cleanup()
+        del self.current_frame
+
         del self.ref_frame
+
         for frame in self.frame_cache:
-            frame.cleanup()
+            if frame is not None:
+                frame.in_cache = False
+                frame.cleanup()
+                del frame
+        self.frame_cache.clear()
         del self.frame_cache
 
         if self.show:
@@ -417,22 +473,41 @@ class VideoMotion(object):
             if not self.read():
                 break
 
+            #a frame')
+
             self.blur_frame()
             self.mask_off_areas()
             self.find_diff()
 
+            #log.debug('Found diff')
+
             # draw contours and set movement
             self.find_movement()
 
+            #log.debug('Found movement')
+
+            if self.mem:
+                log.info(mem_top())
+
             self.decide_output()
+
+            #log.debug('Decided output')
 
             if self.show:
                 cv2.imshow('thresh', self.current_frame.thresh)
                 cv2.imshow('delta', self.current_frame.frame_delta)
-                cv2.imshow('raw', imutils.resize(self.current_frame.raw, width=500))
+                cv2.imshow('raw', self.current_frame.raw)
+
+            self.current_frame.cleanup()
+
+            #log.debug('Cleaned up frame')
 
             if VideoMotion.key_pressed('q'):
+                log.debug('Closing video at user request')
+                # TODO: set flag saying so
                 break
+
+        log.debug('Cleaning up video')
 
         self.cleanup()
 
@@ -448,6 +523,7 @@ class VideoFrame(object):
     def __init__(self, frame):
         self.frame = frame
         self.raw = self.frame.copy()
+        self.in_cache = False
         self.contours = None
         self.frame_delta = None
         self.thresh = None
@@ -486,9 +562,15 @@ class VideoFrame(object):
         """
         Actively destroy the frame
         """
-        for attr in ('frame', 'raw', 'thresh', 'contours', 'frame_delta', 'blur'):
+        log.debug('Cleanup frame')
+        for attr in ('frame', 'thresh', 'contours', 'frame_delta', 'blur'):
             if hasattr(self, attr):
                 delattr(self, attr)
+        if self.in_cache:
+            log.debug('Frame in cache, not cleaning up up raw frame or deleting frame object')
+            return
+        if hasattr(self, 'raw'):
+            del self.raw
         del self
 
 
@@ -501,15 +583,22 @@ def find_files(directory):
 
 
 # pylint: disable=too-many-arguments
-def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_level=None):
+def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_level=None, mem=None):
     """
-    Video creater and runner funnction to pass to multiprocessing pool
+    Video creation and runner function to pass to multiprocessing pool
     """
-    vid = VideoMotion(filename=filename, outdir=outdir, mask_areas=mask_areas,
-                      show=show, codec=codec, log_level=log_level)
-    err = vid.find_motion()
+    try:
+        vid = VideoMotion(filename=filename, outdir=outdir, mask_areas=mask_areas,
+                          delta_thresh=12, show=show, codec=codec,
+                          log_level=log_level, mem=mem)
+        err = vid.find_motion()
+    except Exception as e:
+        raise e
+        log.error(e)
+        err = None
     return (err, filename)
 # pylint: enable=too-many-arguments
+
 
 class DummyProgressBar(object):
     # pylint: disable=too-few-public-methods
@@ -523,6 +612,9 @@ class DummyProgressBar(object):
         pass
 
     def __enter__(self, *args):
+        return self
+
+    def update(self, *args, **kwargs):
         pass
 
 
@@ -537,6 +629,7 @@ def get_progress(log_file):
     except FileNotFoundError:
         log.debug('Did not find log file at {}'.format(log_file))
         return []
+
 
 def run_pool(job=None, processes=2, files=None, pbar=None):
     """
@@ -555,15 +648,15 @@ def run_pool(job=None, processes=2, files=None, pbar=None):
             num_done = [res.ready() for res in results].count(True)
             if num_done > done:
                 done = num_done
-                pbar.update(done)
+            pbar.update(done)
             if num_done == num_files:
                 log.debug("All processes completed")
                 break
             time.sleep(1)
     except KeyboardInterrupt:
         log.warning('Ending processing at user request')
-        pool.terminate()
 
+    pool.terminate()
     return results
 
 
@@ -604,13 +697,13 @@ def run(args):
     log.debug('Processing {} files'.format(num_files))
 
     with progressbar.ProgressBar(max_value=len(files), redirect_stdout=True, redirect_stderr=True) if args.progress else DummyProgressBar() as pbar:
-        if pbar is not None:
-            pbar.update(0)
+        pbar.update(0)
         with open(log_file, 'a', LINE_BUFFERED) as progress_log:
             # freeze parameters for multiprocessing
             job = partial(run_vid, outdir=args.output_dir, mask_areas=MASK_AREAS,
                           show=args.show, codec=args.codec,
-                          log_level=logging.DEBUG if args.debug else logging.INFO)
+                          log_level=logging.DEBUG if args.debug else logging.INFO,
+                          mem=args.mem)
 
             if args.processes > 1:
                 results = run_pool(job, args.processes, files, pbar)
@@ -618,7 +711,8 @@ def run(args):
                     if res.ready():
                         status, filename = res.get()
                         log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
-                        print(filename, file=progress_log)
+                        if status is not None:
+                            print(filename, file=progress_log)
             else:
                 files_processed = map(job, files)
 
@@ -629,7 +723,8 @@ def run(args):
                         done += 1
                         pbar.update(done)
                     log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
-                    print(filename, file=progress_log)
+                    if status is not None:
+                        print(filename, file=progress_log)
 
 
 def get_args(parser):
@@ -641,6 +736,7 @@ def get_args(parser):
     parser.add_argument('--input-dir', '-i', help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
     parser.add_argument('--debug', '-d', action='store_true', help='Debug')
+    parser.add_argument('--mem', action='store_true', help='Run memory usage')
     parser.add_argument('--codec', '-c', default='MP42', help='Codec to write files with')
     parser.add_argument('--processes', '-J', default=4, type=int, help='Number of processors to use')
     parser.add_argument('--progress', '-p', action='store_true', help='Show progress bar')
@@ -650,6 +746,7 @@ def get_args(parser):
 MASK_AREAS = [
     ((0, 0), (600, 300)),
     ((0, 0), (1450, 200)),
+    ((1053, 370), (1215, 450)),
 ]
 
 
