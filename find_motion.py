@@ -57,9 +57,10 @@ DONE: fix motion detection so we stop writing frames after movement goes away (s
 
 DONE: fix OutOfMemory problems? Can I catch that error and return that it happened, at least?
     I now aggressively del objects once they are done with, especially in the frame_cache - seems to have solved the memory leak
-TODO: now leaking VideoFrame objects somewhere - fix!!! XXX
+DONE: now leaking VideoFrame objects somewhere - fix!!!
+    I'd initialised frame_cache to a list *after* it was initialised in _load_video() to a deque
 
-TODO: improve progress output so that filenames are being written as they are processed - keep track of which have been done in a set, and only write out if done
+DONE: improve progress output so that filenames are being written as they are processed - keep track of which have been done in a set, and only write out if done
 
 TODO: add config using ConfigParser
 
@@ -70,7 +71,11 @@ TODO: make frame_cache its own class so we can do cleanup etc. more neatly
 DONE: why it is so slooow now? Seems to have got slower than first version. Why? Is it the constant object deletion to avoid the memory leak?
     it was running mem_top even when not in debug. Put boolean check round it.
 
-TODO: why is it not processing videos correctly now? It seems to just skip to the end.
+DONE: why is it not processing videos correctly now? It seems to just skip to the end.
+    Fiddled until it wasn't broken
+
+DONE: progress bar updates eta very strangely, seems to be sensitive to immediate rate - change to overall rate, not immediate
+    Tried using a different ETA widget. Let's see how this one behaves.
 """
 
 import os
@@ -594,8 +599,8 @@ def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_l
         err = vid.find_motion()
     except Exception as e:
         raise e
-        log.error(e)
-        err = None
+        #log.error(e)
+        #err = None
     return (err, filename)
 # pylint: enable=too-many-arguments
 
@@ -631,23 +636,31 @@ def get_progress(log_file):
         return []
 
 
-def run_pool(job=None, processes=2, files=None, pbar=None):
+def run_pool(job=None, processes=2, files=None, pbar=None, progress_log=None):
     """
     Create and run a pool of workers
     """
-    results = []
-
     num_files = len(files)
     done = 0
+    files_written = set()
+    results = []
 
     try:
         pool = Pool(processes=processes, initializer=init_worker)
         for filename in files:
             results.append(pool.apply_async(job, (filename,)))
         while True:
-            num_done = [res.ready() for res in results].count(True)
+            files_done = {res.get() for res in results if res.ready()}
+            num_done = len(files_done)
             if num_done > done:
                 done = num_done
+            if done > 0:
+                new = files_done.difference(files_written)
+                files_written.update(new)
+                for status, filename in new:
+                    log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+                    if status is not None and progress_log is not None:
+                        print(filename, file=progress_log)
             pbar.update(done)
             if num_done == num_files:
                 log.debug("All processes completed")
@@ -657,7 +670,20 @@ def run_pool(job=None, processes=2, files=None, pbar=None):
         log.warning('Ending processing at user request')
 
     pool.terminate()
-    return results
+
+
+def run_map(job, files, pbar, progress_log):
+    files_processed = map(job, files)
+
+    done = 0
+
+    for status, filename in files_processed:
+        if pbar is not None:
+            done += 1
+            pbar.update(done)
+        log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+        if status is not None:
+            print(filename, file=progress_log)
 
 
 def main():
@@ -696,35 +722,28 @@ def run(args):
 
     log.debug('Processing {} files'.format(num_files))
 
-    with progressbar.ProgressBar(max_value=len(files), redirect_stdout=True, redirect_stderr=True) if args.progress else DummyProgressBar() as pbar:
+    pbar_widgets = [
+        progressbar.Counter(), '/', str(num_files), ' ',
+        progressbar.Percentage(), ' ',
+        progressbar.Bar(), ' ',
+        progressbar.Timer(), ' ',
+        progressbar.ETA(),
+    ]
+
+    with progressbar.ProgressBar(max_value=len(files), redirect_stdout=True, redirect_stderr=True, widgets=pbar_widgets) if args.progress else DummyProgressBar() as pbar:
         pbar.update(0)
         with open(log_file, 'a', LINE_BUFFERED) as progress_log:
             # freeze parameters for multiprocessing
-            job = partial(run_vid, outdir=args.output_dir, mask_areas=MASK_AREAS,
+            job = partial(run_vid,
+                          outdir=args.output_dir, mask_areas=MASK_AREAS,
                           show=args.show, codec=args.codec,
                           log_level=logging.DEBUG if args.debug else logging.INFO,
                           mem=args.mem)
 
             if args.processes > 1:
-                results = run_pool(job, args.processes, files, pbar)
-                for res in results:
-                    if res.ready():
-                        status, filename = res.get()
-                        log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
-                        if status is not None:
-                            print(filename, file=progress_log)
+                run_pool(job, args.processes, files, pbar, progress_log)
             else:
-                files_processed = map(job, files)
-
-                done = 0
-
-                for status, filename in files_processed:
-                    if pbar is not None:
-                        done += 1
-                        pbar.update(done)
-                    log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
-                    if status is not None:
-                        print(filename, file=progress_log)
+                run_map(job, files, pbar, progress_log)
 
 
 def get_args(parser):
