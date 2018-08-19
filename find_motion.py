@@ -37,7 +37,7 @@ DONE: progress bar with ProgressBar2 module - one for the whole run
 
 DONE: sort input files by date, process in time order. Change sets to orderedset.
 
-TODO: nicer way to specify filtered areas, using literal_eval
+TODO: nicer way to specify filtered areas, using literal_eval - XXX
 
 TODO: return flag to say if the file completed without error, or was user interrupted
     (q or ctrl-c), or had an exception of some kind
@@ -76,6 +76,20 @@ DONE: why is it not processing videos correctly now? It seems to just skip to th
 
 DONE: progress bar updates eta very strangely, seems to be sensitive to immediate rate - change to overall rate, not immediate
     Tried using a different ETA widget. Let's see how this one behaves.
+
+DONE: max box size for movement, so that sun changes that create "movement" over the whole screen don't get registered as motion
+
+TODO: scale box sizes by location in frame - gradient, or custom matrix
+
+DONE: increase blur dimension - allow that as an arg
+
+DONE: add option to have 3 coordinate areas to mask (with a triangle)
+    Can have arbitrary convex polygons
+
+TODO: look at more OpenCV functions, e.g.
+    https://docs.opencv.org/3.2.0/d7/df6/classcv_1_1BackgroundSubtractor.html
+    https://docs.opencv.org/3.2.0/dd/d73/classcv_1_1bioinspired_1_1RetinaFastToneMapping.html
+    https://docs.opencv.org/3.2.0/d9/d7a/classcv_1_1xphoto_1_1WhiteBalancer.html
 """
 
 import os
@@ -97,9 +111,11 @@ import progressbar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
+import numpy as np
 
 import cv2
 import imutils
+
 
 # pylint: disable=invalid-name
 log = logging.getLogger(__name__)
@@ -126,8 +142,9 @@ class VideoMotion(object):
     """
     # pylint: disable=too-many-instance-attributes,too-many-arguments
     def __init__(self, filename=None, outdir=None, fps=30,
-                 box_size=100, cache_time=2, min_movement_time=0.25,
-                 delta_thresh=7, avg=0.1, mask_areas=None, show=False,
+                 box_size=100, cache_time=2.0, min_time=0.5,
+                 threshold=7, avg=0.1, gaussian_scale=20,
+                 mask_areas=None, show=False,
                  codec='MJPG', log_level=logging.INFO, mem=False):
         self.filename = filename
 
@@ -142,9 +159,12 @@ class VideoMotion(object):
 
         self.fps = fps
         self.box_size = box_size
+        self.min_area = None
+        self.max_area = None
+        self.gaussian_scale = gaussian_scale
         self.cache_frames = int(cache_time * fps)
-        self.min_movement_frames = int(min_movement_time * fps)
-        self.delta_thresh = delta_thresh
+        self.min_movement_frames = int(min_time * fps)
+        self.delta_thresh = threshold
         self.avg = avg
         self.mask_areas = mask_areas if mask_areas is not None else []
         self.show = show
@@ -158,9 +178,9 @@ class VideoMotion(object):
         log.debug(self.codec)
 
         # initialised in _load_video
-        self.amount_of_frames = 0
-        self.frame_width = 0
-        self.frame_height = 0
+        self.amount_of_frames = None
+        self.frame_width = None
+        self.frame_height = None
         self.scale = None
 
         self.current_frame = None
@@ -194,6 +214,7 @@ class VideoMotion(object):
 
         self._get_video_info()
         self.scale = self.box_size / self.frame_width
+        self.max_area = int((self.frame_width * self.frame_height)/2) * self.scale
 
 
     def _make_outfile(self):
@@ -218,7 +239,7 @@ class VideoMotion(object):
         """
         Make a gaussian for the blur using the box size as a guide
         """
-        gaussian_size = int(self.box_size/20)
+        gaussian_size = int(self.box_size/self.gaussian_scale)
         gaussian_size = gaussian_size + 1 if gaussian_size % 2 == 0 else gaussian_size
         self.gaussian = (gaussian_size, gaussian_size)
 
@@ -331,14 +352,21 @@ class VideoMotion(object):
 
     def mask_off_areas(self, frame=None):
         """
-        Draw black rectangles over the masked off areas
+        Draw black polygons over the masked off areas
         """
         frame = self.current_frame if frame is None else frame
         for area in self.mask_areas:
-            cv2.rectangle(frame.blur,
-                          *VideoMotion.scale_area(area, self.scale),
-                          BLACK, cv2.FILLED)
-
+            scaled_area = VideoMotion.scale_area(area, self.scale)
+            dim = len(scaled_area)
+            if dim == 2:
+                cv2.rectangle(frame.blur,
+                            *scaled_area,
+                            BLACK, cv2.FILLED)
+            else:
+                pts = np.array(scaled_area, np.int32)
+                cv2.fillConvexPoly(frame.blur,
+                              pts,
+                              BLACK)
 
     def find_diff(self, frame=None):
         """
@@ -376,13 +404,16 @@ class VideoMotion(object):
             # loop over the contours
             for contour in frame.contours:
                 # if the contour is too small, ignore it
-                if cv2.contourArea(contour) < self.min_area:
+                if self.max_area < cv2.contourArea(contour) < self.min_area:
                     continue
 
                 # compute the bounding box for the contour, draw it on the frame,
                 # and update the text
+
                 if self.show:
-                    self.make_box(contour, frame)
+                    box = self.make_box(contour, frame)
+                    self.draw_box(box, frame)
+
                 self.movement_counter += 1
                 self.movement = True
 
@@ -412,12 +443,16 @@ class VideoMotion(object):
         """
         Draw a green bounding box on the frame
         """
-        # pylint: disable=invalid-name
         frame = self.current_frame if frame is None else frame
+        # pylint: disable=invalid-name
         (x, y, w, h) = cv2.boundingRect(contour)
         area = ((x, y), (x + w, y + h))
+        return area
+
+
+    def draw_box(self, area, frame=None):
+        frame = self.current_frame if frame is None else frame
         cv2.rectangle(frame.frame, *self.scale_area(area, 1/self.scale), GREEN, 2)
-        return
 
 
     @staticmethod
@@ -437,7 +472,8 @@ class VideoMotion(object):
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         if self.amount_of_frames == 0 or self.frame_width == 0 or self.frame_height == 0:
-            raise Exception("Video info malformed - number of frames, height or width is 0")
+            broken = 'frames' if self.amount_of_frames == 0 else 'height/width'
+            raise Exception("Video info malformed - {} is 0: {}".format(broken, self.filename))
         return
 
 
@@ -500,7 +536,8 @@ class VideoMotion(object):
 
             if self.show:
                 cv2.imshow('thresh', self.current_frame.thresh)
-                cv2.imshow('delta', self.current_frame.frame_delta)
+                #cv2.imshow('delta', self.current_frame.frame_delta)
+                cv2.imshow('blur', self.current_frame.blur)
                 cv2.imshow('raw', self.current_frame.raw)
 
             self.current_frame.cleanup()
@@ -588,14 +625,15 @@ def find_files(directory):
 
 
 # pylint: disable=too-many-arguments
-def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_level=None, mem=None):
+def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_level=None, mem=None, blur_scale=None, threshold=None, fps=None, min_time=None, cache_time=None, avg=None):
     """
     Video creation and runner function to pass to multiprocessing pool
     """
     try:
         vid = VideoMotion(filename=filename, outdir=outdir, mask_areas=mask_areas,
-                          delta_thresh=12, show=show, codec=codec,
-                          log_level=log_level, mem=mem)
+                          gaussian_scale=blur_scale, show=show, codec=codec,
+                          log_level=log_level, mem=mem, threshold=threshold, avg=avg,
+                          fps=fps, min_time=min_time, cache_time=cache_time)
         err = vid.find_motion()
     except Exception as e:
         raise e
@@ -632,7 +670,6 @@ def get_progress(log_file):
             done_files = {f.strip() for f in progress_log.readlines()}
             return done_files
     except FileNotFoundError:
-        log.debug('Did not find log file at {}'.format(log_file))
         return []
 
 
@@ -677,13 +714,16 @@ def run_map(job, files, pbar, progress_log):
 
     done = 0
 
-    for status, filename in files_processed:
-        if pbar is not None:
-            done += 1
-            pbar.update(done)
-        log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
-        if status is not None:
-            print(filename, file=progress_log)
+    try:
+        for status, filename in files_processed:
+            if pbar is not None:
+                done += 1
+                pbar.update(done)
+            log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+            if status is not None:
+                print(filename, file=progress_log)
+    except KeyboardInterrupt:
+        log.warning('Ending processing at user request')
 
 
 def main():
@@ -713,7 +753,7 @@ def run(args):
     files = OrderedSet(args.files)
     files.update(find_files(args.input_dir))
 
-    log_file = os.path.join(args.output_dir, 'progress.log')
+    log_file = os.path.join(args.output_dir if args.output_dir is not None else '.', 'progress.log')
 
     done_files = get_progress(log_file)
     files.difference_update(done_files)
@@ -732,13 +772,14 @@ def run(args):
 
     with progressbar.ProgressBar(max_value=len(files), redirect_stdout=True, redirect_stderr=True, widgets=pbar_widgets) if args.progress else DummyProgressBar() as pbar:
         pbar.update(0)
-        with open(log_file, 'a', LINE_BUFFERED) as progress_log:
+        with open(log_file, 'a+', LINE_BUFFERED) as progress_log:
             # freeze parameters for multiprocessing
             job = partial(run_vid,
                           outdir=args.output_dir, mask_areas=MASK_AREAS,
                           show=args.show, codec=args.codec,
                           log_level=logging.DEBUG if args.debug else logging.INFO,
-                          mem=args.mem)
+                          mem=args.mem, blur_scale=args.blur_scale, threshold=args.threshold, avg=args.avg,
+                          fps=args.fps, min_time=args.mintime, cache_time=args.cachetime)
 
             if args.processes > 1:
                 run_pool(job, args.processes, files, pbar, progress_log)
@@ -751,21 +792,35 @@ def get_args(parser):
     Set how to process command line arguments
     """
     parser.add_argument('files', nargs='*', help='Video files to find motion in')
-    parser.add_argument('--show', '-s', action='store_true', default=False, help='Show video processing')
+
     parser.add_argument('--input-dir', '-i', help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
-    parser.add_argument('--debug', '-d', action='store_true', help='Debug')
-    parser.add_argument('--mem', action='store_true', help='Run memory usage')
+
     parser.add_argument('--codec', '-c', default='MP42', help='Codec to write files with')
-    parser.add_argument('--processes', '-J', default=4, type=int, help='Number of processors to use')
-    parser.add_argument('--progress', '-p', action='store_true', help='Show progress bar')
     parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video') # XXX
+
+    parser.add_argument('--blur_scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width')
+    parser.add_argument('--threshold', '-t', type=int, default=12, help='Threshold for change in grayscale')
+    parser.add_argument('--mintime', type=float, default=0.5, help='Minimum time for motion, in seconds')
+    parser.add_argument('--cachetime', type=float, default=1.0, help='How long to cache, in seconds')
+    parser.add_argument('--avg', '-a', type=float, default=0.1, help='How much to weight the most recent frame in the running average')
+    parser.add_argument('--fps', '-f', type=int, default=30, help='Frames per second of input files')
+
+    parser.add_argument('--processes', '-J', default=1, type=int, help='Number of processors to use')
+
+    parser.add_argument('--progress', '-p', action='store_true', help='Show progress bar')
+    parser.add_argument('--show', '-s', action='store_true', default=False, help='Show video processing')
+
+    parser.add_argument('--mem', action='store_true', help='Run memory usage')
+    parser.add_argument('--debug', '-d', action='store_true', help='Debug')
 
 
 MASK_AREAS = [
     ((0, 0), (600, 300)),
     ((0, 0), (1450, 200)),
     ((1053, 370), (1215, 450)),
+    ((1900, 0), (1920, 1080)),
+    ((1600, 1080), (1920, 850), (1920, 1080))
 ]
 
 
