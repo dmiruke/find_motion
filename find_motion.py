@@ -5,39 +5,15 @@
 """
 Motion detection with OpenCV
 
-With much help from...
-https://www.pyimagesearch.com/
+With much help from https://www.pyimagesearch.com/
 
-Caches images for a few frames before and after we detect movement
+Caches images for a few frames before and after it detects movement
+"""
 
+"""
 TODO: deal with 2GB max file output size :-( in OpenCV
         catch Exception and open another file with a 1-up number
         mostly dealt with using compression, but should still handle this
-
-DONE: spec an output folder, and an input folder
-
-DONE: compress output somehow!
-
-DONE: remove any 0 frame ouput files - better, only create output file once we have our first output
-
-DONE: minimum length of motion before we think it is motion
-
-DONE: multiprocessing with a Pool
-
-DONE: deal well with KeyboardInterrupt when multiprocess.
-    Wherever we are, fail in a way that kills the pool as a whole
-    tried using a metaclass to decorate each method of the class, but that's not working
-    managed to block SIGINT in workers and use apply_async and a loop to check if workers
-    were complete, which allows neat ctrl-c behaviour at the expense of ugly code.
-
-DONE: keep track of which files have processed in a dot file in the directory, allow resuming, skipping those
-    already doing log.debug(), start to write to a file, and then read that file on resume
-
-DONE: progress bar with ProgressBar2 module - one for the whole run
-
-DONE: sort input files by date, process in time order. Change sets to orderedset.
-
-TODO: nicer way to specify filtered areas, using literal_eval - XXX
 
 TODO: return flag to say if the file completed without error, or was user interrupted
     (q or ctrl-c), or had an exception of some kind
@@ -45,22 +21,7 @@ TODO: return flag to say if the file completed without error, or was user interr
 TODO: logging in the workers - they should pass messages to the master on completion
     - override log and write output to master in a list
 
-DONE: imap_async, so that master gets results as they arrive, not once the whole job has completed,
-    so that progress.log gets written to
-
 TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
-
-DONE: remove 'frame' processing - drawing box, adding text, etc. if we are not showing it - waste of time and memory. Just del self.frame etc. done with it.
-
-DONE: fix motion detection so we stop writing frames after movement goes away (seems broken at the moment)
-    not sure what was wrong, seems to be working OK now
-
-DONE: fix OutOfMemory problems? Can I catch that error and return that it happened, at least?
-    I now aggressively del objects once they are done with, especially in the frame_cache - seems to have solved the memory leak
-DONE: now leaking VideoFrame objects somewhere - fix!!!
-    I'd initialised frame_cache to a list *after* it was initialised in _load_video() to a deque
-
-DONE: improve progress output so that filenames are being written as they are processed - keep track of which have been done in a set, and only write out if done
 
 TODO: add config using ConfigParser
 
@@ -68,28 +29,14 @@ TODO: think about r/g/b channel motion detection, instead of just grayscale, or 
 
 TODO: make frame_cache its own class so we can do cleanup etc. more neatly
 
-DONE: why it is so slooow now? Seems to have got slower than first version. Why? Is it the constant object deletion to avoid the memory leak?
-    it was running mem_top even when not in debug. Put boolean check round it.
-
-DONE: why is it not processing videos correctly now? It seems to just skip to the end.
-    Fiddled until it wasn't broken
-
-DONE: progress bar updates eta very strangely, seems to be sensitive to immediate rate - change to overall rate, not immediate
-    Tried using a different ETA widget. Let's see how this one behaves.
-
-DONE: max box size for movement, so that sun changes that create "movement" over the whole screen don't get registered as motion
-
 TODO: scale box sizes by location in frame - gradient, or custom matrix
-
-DONE: increase blur dimension - allow that as an arg
-
-DONE: add option to have 3 coordinate areas to mask (with a triangle)
-    Can have arbitrary convex polygons
 
 TODO: look at more OpenCV functions, e.g.
     https://docs.opencv.org/3.2.0/d7/df6/classcv_1_1BackgroundSubtractor.html
     https://docs.opencv.org/3.2.0/dd/d73/classcv_1_1bioinspired_1_1RetinaFastToneMapping.html
     https://docs.opencv.org/3.2.0/d9/d7a/classcv_1_1xphoto_1_1WhiteBalancer.html
+
+TODO: use json_schema to check masks file is the right format
 """
 
 import os
@@ -100,6 +47,7 @@ import math
 
 from argparse import ArgumentParser
 from ast import literal_eval
+import json
 
 from collections import deque
 
@@ -143,7 +91,7 @@ class VideoMotion(object):
     # pylint: disable=too-many-instance-attributes,too-many-arguments
     def __init__(self, filename=None, outdir=None, fps=30,
                  box_size=100, cache_time=2.0, min_time=0.5,
-                 threshold=7, avg=0.1, gaussian_scale=20,
+                 threshold=7, avg=0.1, blur_scale=20,
                  mask_areas=None, show=False,
                  codec='MJPG', log_level=logging.INFO, mem=False):
         self.filename = filename
@@ -161,7 +109,7 @@ class VideoMotion(object):
         self.box_size = box_size
         self.min_area = None
         self.max_area = None
-        self.gaussian_scale = gaussian_scale
+        self.gaussian_scale = blur_scale
         self.cache_frames = int(cache_time * fps)
         self.min_movement_frames = int(min_time * fps)
         self.delta_thresh = threshold
@@ -277,11 +225,10 @@ class VideoMotion(object):
         frame = self.current_frame if frame is None else frame
         self.wrote_frames = True
         if self.show:
-            cv2.imshow('frame', frame.frame) # imutils.resize(frame.frame, width=self.frame_width))
+            cv2.imshow('frame', frame.frame)
         if self.outfile is None:
             self._make_outfile()
         self.outfile.write(frame.raw)
-        #frame.cleanup
 
 
     def output_raw_frame(self, frame=None):
@@ -360,13 +307,14 @@ class VideoMotion(object):
             dim = len(scaled_area)
             if dim == 2:
                 cv2.rectangle(frame.blur,
-                            *scaled_area,
-                            BLACK, cv2.FILLED)
+                              *scaled_area,
+                              BLACK, cv2.FILLED)
             else:
                 pts = np.array(scaled_area, np.int32)
                 cv2.fillConvexPoly(frame.blur,
-                              pts,
-                              BLACK)
+                                   pts,
+                                   BLACK)
+
 
     def find_diff(self, frame=None):
         """
@@ -514,35 +462,24 @@ class VideoMotion(object):
             if not self.read():
                 break
 
-            #a frame')
-
             self.blur_frame()
             self.mask_off_areas()
             self.find_diff()
 
-            #log.debug('Found diff')
-
             # draw contours and set movement
             self.find_movement()
-
-            #log.debug('Found movement')
 
             if self.mem:
                 log.info(mem_top())
 
             self.decide_output()
 
-            #log.debug('Decided output')
-
             if self.show:
                 cv2.imshow('thresh', self.current_frame.thresh)
-                #cv2.imshow('delta', self.current_frame.frame_delta)
                 cv2.imshow('blur', self.current_frame.blur)
                 cv2.imshow('raw', self.current_frame.raw)
 
             self.current_frame.cleanup()
-
-            #log.debug('Cleaned up frame')
 
             if VideoMotion.key_pressed('q'):
                 log.debug('Closing video at user request')
@@ -624,27 +561,21 @@ def find_files(directory):
     return OrderedSet([f[0] for f in sorted([(f, os.path.getmtime(f)) for f in files], key=lambda f: f[1])])
 
 
-# pylint: disable=too-many-arguments
-def run_vid(filename, outdir=None, mask_areas=None, show=None, codec=None, log_level=None, mem=None, blur_scale=None, threshold=None, fps=None, min_time=None, cache_time=None, avg=None):
+def run_vid(filename, **kwargs):
     """
     Video creation and runner function to pass to multiprocessing pool
     """
     try:
-        vid = VideoMotion(filename=filename, outdir=outdir, mask_areas=mask_areas,
-                          gaussian_scale=blur_scale, show=show, codec=codec,
-                          log_level=log_level, mem=mem, threshold=threshold, avg=avg,
-                          fps=fps, min_time=min_time, cache_time=cache_time)
+        vid = VideoMotion(filename=filename, **kwargs)
         err = vid.find_motion()
     except Exception as e:
         raise e
         #log.error(e)
         #err = None
     return (err, filename)
-# pylint: enable=too-many-arguments
 
 
 class DummyProgressBar(object):
-    # pylint: disable=too-few-public-methods
     """
     A pretend progress bar
     """
@@ -732,7 +663,6 @@ def main():
     """
     parser = ArgumentParser()
     get_args(parser)
-
     args = parser.parse_args()
 
     logging.basicConfig()
@@ -740,9 +670,42 @@ def main():
     run(args)
 
 
+def make_pbar_widgets(num_files):
+    """
+    Create progressbar widgets
+    """
+    return [
+        progressbar.Counter(), '/', str(num_files), ' ',
+        progressbar.Percentage(), ' ',
+        progressbar.Bar(), ' ',
+        progressbar.Timer(), ' ',
+        progressbar.ETA(),
+    ]
+
+
+def read_masks(masks_file):
+    try:
+        with open(masks_file, 'r') as mf:
+            masks = json.load(mf)
+
+            log.debug(masks)
+
+            out_masks = []
+
+            for mask in masks:
+                log.debug(mask)
+                out_masks.append(tuple([tuple(coord) for coord in mask]))
+
+            return out_masks
+
+    except Exception as e:
+        log.error('Masks file not read ({}): {}'.format(masks_file, e))
+        return []
+
+
 def run(args):
     """
-    Secondary entry point to allow running from a different app
+    Secondary entry point to allow running from a different app using an argparse Namespace
     """
     if args.progress:
         progressbar.streams.wrap_stderr()
@@ -750,10 +713,17 @@ def run(args):
     if args.debug:
         log.setLevel(logging.DEBUG)
 
+    masks = args.masks if args.masks else []
+
+    if args.masks_file:
+        masks.extend(read_masks(args.masks_file))
+
+    log.debug(masks)
+
     files = OrderedSet(args.files)
     files.update(find_files(args.input_dir))
 
-    log_file = os.path.join(args.output_dir if args.output_dir is not None else '.', 'progress.log')
+    log_file = os.path.join(args.output_dir if args.output_dir is not None else args.input_dir, 'progress.log')
 
     done_files = get_progress(log_file)
     files.difference_update(done_files)
@@ -762,20 +732,11 @@ def run(args):
 
     log.debug('Processing {} files'.format(num_files))
 
-    pbar_widgets = [
-        progressbar.Counter(), '/', str(num_files), ' ',
-        progressbar.Percentage(), ' ',
-        progressbar.Bar(), ' ',
-        progressbar.Timer(), ' ',
-        progressbar.ETA(),
-    ]
-
-    with progressbar.ProgressBar(max_value=len(files), redirect_stdout=True, redirect_stderr=True, widgets=pbar_widgets) if args.progress else DummyProgressBar() as pbar:
+    with progressbar.ProgressBar(max_value=num_files, redirect_stdout=True, redirect_stderr=True, widgets=make_pbar_widgets(num_files)) if args.progress else DummyProgressBar() as pbar:
         pbar.update(0)
         with open(log_file, 'a+', LINE_BUFFERED) as progress_log:
-            # freeze parameters for multiprocessing
             job = partial(run_vid,
-                          outdir=args.output_dir, mask_areas=MASK_AREAS,
+                          outdir=args.output_dir, mask_areas=masks,
                           show=args.show, codec=args.codec,
                           log_level=logging.DEBUG if args.debug else logging.INFO,
                           mem=args.mem, blur_scale=args.blur_scale, threshold=args.threshold, avg=args.avg,
@@ -797,7 +758,8 @@ def get_args(parser):
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
 
     parser.add_argument('--codec', '-c', default='MP42', help='Codec to write files with')
-    parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video') # XXX
+    parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video')
+    parser.add_argument('--masks_file', help='File holding mask coordinates (JSON)')
 
     parser.add_argument('--blur_scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width')
     parser.add_argument('--threshold', '-t', type=int, default=12, help='Threshold for change in grayscale')
@@ -811,17 +773,8 @@ def get_args(parser):
     parser.add_argument('--progress', '-p', action='store_true', help='Show progress bar')
     parser.add_argument('--show', '-s', action='store_true', default=False, help='Show video processing')
 
-    parser.add_argument('--mem', action='store_true', help='Run memory usage')
+    parser.add_argument('--mem', '-u', action='store_true', help='Run memory usage')
     parser.add_argument('--debug', '-d', action='store_true', help='Debug')
-
-
-MASK_AREAS = [
-    ((0, 0), (600, 300)),
-    ((0, 0), (1450, 200)),
-    ((1053, 370), (1215, 450)),
-    ((1900, 0), (1920, 1080)),
-    ((1600, 1080), (1920, 850), (1920, 1080))
-]
 
 
 if __name__ == '__main__':
