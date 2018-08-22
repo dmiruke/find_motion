@@ -11,7 +11,7 @@ Caches images for a few frames before and after it detects movement
 """
 
 """
-TODO: deal with 2GB max file output size :-( in OpenCV
+TODO: deal with 2GB max file output size in OpenCV
         catch Exception and open another file with a 1-up number
         mostly dealt with using compression, but should still handle this
 
@@ -37,6 +37,8 @@ TODO: look at more OpenCV functions, e.g.
     https://docs.opencv.org/3.2.0/d9/d7a/classcv_1_1xphoto_1_1WhiteBalancer.html
 
 TODO: use json_schema to check masks file is the right format
+
+TODO: allow opening from a capture stream instead of a file
 """
 
 import os
@@ -497,8 +499,6 @@ class VideoFrame(object):
     """
     encapsulate frame stuff here, out of main video class
     """
-    #__metaclass__ = ErrorCatcher
-
     def __init__(self, frame):
         self.frame = frame
         self.raw = self.frame.copy()
@@ -521,7 +521,6 @@ class VideoFrame(object):
         Find the threshold of the diff
         """
         self.thresh = cv2.threshold(self.frame_delta, thresh, 255, cv2.THRESH_BINARY)[1]
-#        del self.frame_delta
 
 
     def find_contours(self):
