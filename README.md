@@ -39,8 +39,9 @@ To reduce false motion from shadows, wind movement, noise, sun glare and so on, 
 
 ```
 usage: find_motion.py [-h] [--input-dir INPUT_DIR] [--output-dir OUTPUT_DIR]
-                      [--codec CODEC] [--masks [MASKS [MASKS ...]]]
-                      [--masks_file MASKS_FILE] [--blur_scale BLUR_SCALE]
+                      [--config CONFIG] [--codec CODEC]
+                      [--masks [MASKS [MASKS ...]]] [--masks_file MASKS_FILE]
+                      [--blur_scale BLUR_SCALE]
                       [--threshold THRESHOLD] [--mintime MINTIME]
                       [--cachetime CACHETIME] [--avg AVG] [--fps FPS]
                       [--processes PROCESSES] [--progress] [--show] [--mem]
@@ -79,6 +80,10 @@ optional arguments:
   --mem, -u             Run memory usage
   --debug, -d           Debug
 ```
+
+If you use a config file with `--config` then it takes an INI file format with a single `[settings]` section.
+
+Use the same names as the optional arguments given above for the fields of the settings file.
 
 # Functions
 

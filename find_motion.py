@@ -15,19 +15,18 @@ TODO: deal with 2GB max file output size in OpenCV
         catch Exception and open another file with a 1-up number
         mostly dealt with using compression, but should still handle this
 
-TODO: return flag to say if the file completed without error, or was user interrupted
-    (q or ctrl-c), or had an exception of some kind
-
 TODO: logging in the workers - they should pass messages to the master on completion
     - override log and write output to master in a list
 
 TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
 
-TODO: add config using ConfigParser - XXX
+TODO: have args as provided by argparse take priority over those in the config (currently it is vv)
 
 TODO: think about r/g/b channel motion detection, instead of just grayscale, or some kind of colour-change detection instead of just tone change - measure rgb on a linear scale, detect change of 'high' amount
 
 TODO: make frame_cache its own class so we can do cleanup etc. more neatly
+
+TODO: profile memory use without explicit cleanup, see if we can rely on GC to keep memory use in line
 
 TODO: scale box sizes by location in frame - gradient, or custom matrix
 
@@ -40,7 +39,9 @@ TODO: use json_schema to check masks file is the right format
 
 TODO: allow opening from a capture stream instead of a file
 
-TODO: process certain times of day preferentially - based on creation time or a time pulled from filename (allowing format string to parse time)
+TODO: add other output streams - not just to files, to cloud, sFTP server or email
+
+TODO: process certain times of day first - based on creation time or a time pulled from filename (allowing format string to parse time)
 
 TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
 """
@@ -90,6 +91,39 @@ def init_worker():
     Supress signal handling in the worker processes so that they don't capture SIGINT (ctrl-c)
     """
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+class VideoInfo(object):
+    """
+    Class to read in a video, and get metadata out
+    """
+    def __init__(self, filename=None, log_level=logging.INFO):   
+        pass
+
+        self.filename = filename
+        self._load_video()
+
+
+    def _load_video(self):
+        """
+        Open the input video file, get the video info
+        """
+        self.cap = cv2.VideoCapture(self.filename)
+        self._get_video_info()
+
+
+    def _get_video_info(self):
+        """
+        Set some metrics from the video
+        """
+        self.amount_of_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        if self.amount_of_frames == 0 or self.frame_width == 0 or self.frame_height == 0:
+            broken = 'frames' if self.amount_of_frames == 0 else 'height/width'
+            raise Exception("Video info malformed - {} is 0: {}".format(broken, self.filename))
+        return
 
 
 class VideoMotion(object):
@@ -175,6 +209,20 @@ class VideoMotion(object):
         self._get_video_info()
         self.scale = self.box_size / self.frame_width
         self.max_area = int((self.frame_width * self.frame_height)/2) * self.scale
+
+
+    def _get_video_info(self):
+        """
+        Set some metrics from the video
+        """
+        self.amount_of_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        if self.amount_of_frames == 0 or self.frame_width == 0 or self.frame_height == 0:
+            broken = 'frames' if self.amount_of_frames == 0 else 'height/width'
+            raise Exception("Video info malformed - {} is 0: {}".format(broken, self.filename))
+        return
 
 
     def _make_outfile(self):
@@ -421,20 +469,6 @@ class VideoMotion(object):
         Say if we pressed the key we asked for
         """
         return cv2.waitKey(1) & 0xFF == ord(key)
-
-
-    def _get_video_info(self):
-        """
-        Set some metrics from the video
-        """
-        self.amount_of_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        if self.amount_of_frames == 0 or self.frame_width == 0 or self.frame_height == 0:
-            broken = 'frames' if self.amount_of_frames == 0 else 'height/width'
-            raise Exception("Video info malformed - {} is 0: {}".format(broken, self.filename))
-        return
 
 
     def cleanup(self):
@@ -777,7 +811,28 @@ def run(args):
 
 
 def process_config(config_file, args):
-    config = ConfigParser(config_file)
+    """
+    Read an INI style config
+
+    TODO: apply argparse validation to the config values
+    """
+    config = ConfigParser()
+    config.read(config_file)
+    for setting, value in config['settings'].items():
+        if setting in ('processes', 'blur_scale', 'min_box_scale', 'threshold', 'fps'):
+            value = int(value)
+        if setting in ('mintime', 'cachetime', 'avg'):
+            value = float(value)
+        if setting in ('mem', 'progress', 'debug', 'show'):
+            if value == 'True':
+                value = True
+            elif value == 'False':
+                value = False
+            else:
+                raise ValueError('{} must be True or False'.format(setting))
+        if setting == 'masks':
+            value = ast.literal_eval(value)
+        args.__setattr__(setting, value)
     return args # XXX
 
 
@@ -787,7 +842,7 @@ def get_args(parser):
     """
     parser.add_argument('files', nargs='*', help='Video files to find motion in')
 
-    parser.add_argument('--input-dir', '-i', help='Input directory to process')
+    parser.add_argument('--input-dir', '-i', required=True, help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
 
     parser.add_argument('--config', help='Config in INI format')
