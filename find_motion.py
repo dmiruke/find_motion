@@ -23,7 +23,7 @@ TODO: logging in the workers - they should pass messages to the master on comple
 
 TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
 
-TODO: add config using ConfigParser
+TODO: add config using ConfigParser - XXX
 
 TODO: think about r/g/b channel motion detection, instead of just grayscale, or some kind of colour-change detection instead of just tone change - measure rgb on a linear scale, detect change of 'high' amount
 
@@ -39,6 +39,10 @@ TODO: look at more OpenCV functions, e.g.
 TODO: use json_schema to check masks file is the right format
 
 TODO: allow opening from a capture stream instead of a file
+
+TODO: process certain times of day preferentially - based on creation time or a time pulled from filename (allowing format string to parse time)
+
+TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
 """
 
 import os
@@ -48,6 +52,7 @@ import time
 import math
 
 from argparse import ArgumentParser
+from configparser import ConfigParser
 from ast import literal_eval
 import json
 
@@ -74,6 +79,7 @@ log.setLevel(logging.INFO)
 
 LINE_BUFFERED = 1
 
+# Color constants
 BLACK = (0, 0, 0)
 RED = (0, 0, 255)
 GREEN = (0, 255, 0)
@@ -92,7 +98,7 @@ class VideoMotion(object):
     """
     # pylint: disable=too-many-instance-attributes,too-many-arguments
     def __init__(self, filename=None, outdir=None, fps=30,
-                 box_size=100, cache_time=2.0, min_time=0.5,
+                 box_size=100, min_box_scale=50, cache_time=2.0, min_time=0.5,
                  threshold=7, avg=0.1, blur_scale=20,
                  mask_areas=None, show=False,
                  codec='MJPG', log_level=logging.INFO, mem=False):
@@ -109,6 +115,7 @@ class VideoMotion(object):
 
         self.fps = fps
         self.box_size = box_size
+        self.min_box_scale = min_box_scale
         self.min_area = None
         self.max_area = None
         self.gaussian_scale = blur_scale
@@ -136,7 +143,10 @@ class VideoMotion(object):
         self.current_frame = None
         self.ref_frame = None
         self.frame_cache = None
+
         self.wrote_frames = False
+        self.err_msg = None
+        self.log = None # XXX - make logger that returns output on return for logging by calling process, if that's how we're called
 
         self._calc_min_area()
         self._make_gaussian()
@@ -147,11 +157,11 @@ class VideoMotion(object):
         self.movement_counter = 0
 
 
-    def _calc_min_area(self):
+    def _calc_min_area(self, min_box_scale=50):
         """
         Set the minimum motion area based on the box size
         """
-        self.min_area = int(math.pow(self.box_size/50, 2))
+        self.min_area = int(math.pow(self.box_size/self.min_box_scale, 2))
 
 
     def _load_video(self):
@@ -484,15 +494,15 @@ class VideoMotion(object):
             self.current_frame.cleanup()
 
             if VideoMotion.key_pressed('q'):
-                log.debug('Closing video at user request')
-                # TODO: set flag saying so
+                self.wrote_frames = None
+                self.err_msg = 'Closing video at user request'
                 break
 
         log.debug('Cleaning up video')
 
         self.cleanup()
 
-        return self.wrote_frames
+        return self.wrote_frames, self.err_msg
 
 
 class VideoFrame(object):
@@ -566,12 +576,11 @@ def run_vid(filename, **kwargs):
     """
     try:
         vid = VideoMotion(filename=filename, **kwargs)
-        err = vid.find_motion()
+        err, err_msg = vid.find_motion()
     except Exception as e:
-        raise e
-        #log.error(e)
-        #err = None
-    return (err, filename)
+        err_msg = 'Error processing video {}: {}'.format(filename, e)
+        err = None
+    return (err, filename, err_msg)
 
 
 class DummyProgressBar(object):
@@ -624,8 +633,10 @@ def run_pool(job=None, processes=2, files=None, pbar=None, progress_log=None):
             if done > 0:
                 new = files_done.difference(files_written)
                 files_written.update(new)
-                for status, filename in new:
+                for status, filename, err_msg in new:
                     log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+                    if err_msg:
+                        log.error('Error processing {}: {}'.format(filename, err_msg))
                     if status is not None and progress_log is not None:
                         print(filename, file=progress_log)
             pbar.update(done)
@@ -682,17 +693,26 @@ def make_pbar_widgets(num_files):
     ]
 
 
+def make_progressbar(progress=None, num_files=0):
+    """
+    Create progressbar
+    """
+    return progressbar.ProgressBar(max_value=num_files,
+                                   redirect_stdout=True,
+                                   redirect_stderr=True,
+                                   widgets=make_pbar_widgets(num_files)
+                                  ) if progress else DummyProgressBar()
+
+
 def read_masks(masks_file):
     try:
         with open(masks_file, 'r') as mf:
             masks = json.load(mf)
 
-            log.debug(masks)
-
             out_masks = []
 
             for mask in masks:
-                log.debug(mask)
+                log.debug('Mask area: {}'.format(mask))
                 out_masks.append(tuple([tuple(coord) for coord in mask]))
 
             return out_masks
@@ -700,6 +720,10 @@ def read_masks(masks_file):
     except Exception as e:
         log.error('Masks file not read ({}): {}'.format(masks_file, e))
         return []
+
+
+def set_log_file(input_dir, output_dir=None):
+    return os.path.join(output_dir if output_dir is not None else input_dir, 'progress.log')
 
 
 def run(args):
@@ -712,6 +736,9 @@ def run(args):
     if args.debug:
         log.setLevel(logging.DEBUG)
 
+    if args.config:
+        args = process_config(args.config, args)
+
     masks = args.masks if args.masks else []
 
     if args.masks_file:
@@ -719,32 +746,39 @@ def run(args):
 
     log.debug(masks)
 
+    log_file = set_log_file(args.input_dir, args.output_dir)
+    done_files = get_progress(log_file)
+
     files = OrderedSet(args.files)
     files.update(find_files(args.input_dir))
-
-    log_file = os.path.join(args.output_dir if args.output_dir is not None else args.input_dir, 'progress.log')
-
-    done_files = get_progress(log_file)
+    
     files.difference_update(done_files)
 
     num_files = len(files)
 
     log.debug('Processing {} files'.format(num_files))
 
-    with progressbar.ProgressBar(max_value=num_files, redirect_stdout=True, redirect_stderr=True, widgets=make_pbar_widgets(num_files)) if args.progress else DummyProgressBar() as pbar:
+    with make_progressbar(args.progress, num_files) as pbar:
         pbar.update(0)
         with open(log_file, 'a+', LINE_BUFFERED) as progress_log:
             job = partial(run_vid,
                           outdir=args.output_dir, mask_areas=masks,
                           show=args.show, codec=args.codec,
                           log_level=logging.DEBUG if args.debug else logging.INFO,
-                          mem=args.mem, blur_scale=args.blur_scale, threshold=args.threshold, avg=args.avg,
+                          mem=args.mem,
+                          blur_scale=args.blur_scale, min_box_scale=args.min_box_scale,
+                          threshold=args.threshold, avg=args.avg,
                           fps=args.fps, min_time=args.mintime, cache_time=args.cachetime)
 
             if args.processes > 1:
                 run_pool(job, args.processes, files, pbar, progress_log)
             else:
                 run_map(job, files, pbar, progress_log)
+
+
+def process_config(config_file, args):
+    config = ConfigParser(config_file)
+    return args # XXX
 
 
 def get_args(parser):
@@ -756,14 +790,17 @@ def get_args(parser):
     parser.add_argument('--input-dir', '-i', help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
 
+    parser.add_argument('--config', help='Config in INI format')
+
     parser.add_argument('--codec', '-c', default='MP42', help='Codec to write files with')
     parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video')
     parser.add_argument('--masks_file', help='File holding mask coordinates (JSON)')
 
-    parser.add_argument('--blur_scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width')
+    parser.add_argument('--blur_scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width (used as 1/blur_scale)')
+    parser.add_argument('--min_box_scale', '-B', type=int, default=50, help='Scale of minimum motion compared to video width (used as 1/min_box_scale')
     parser.add_argument('--threshold', '-t', type=int, default=12, help='Threshold for change in grayscale')
-    parser.add_argument('--mintime', type=float, default=0.5, help='Minimum time for motion, in seconds')
-    parser.add_argument('--cachetime', type=float, default=1.0, help='How long to cache, in seconds')
+    parser.add_argument('--mintime', '-M', type=float, default=0.5, help='Minimum time for motion, in seconds')
+    parser.add_argument('--cachetime', '-C', type=float, default=1.0, help='How long to cache, in seconds')
     parser.add_argument('--avg', '-a', type=float, default=0.1, help='How much to weight the most recent frame in the running average')
     parser.add_argument('--fps', '-f', type=int, default=30, help='Frames per second of input files')
 
