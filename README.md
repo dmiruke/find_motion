@@ -105,6 +105,12 @@ Use the same names as the optional arguments given above for the fields of the s
     
     make_pbar_widgets(num_files)
         Create progressbar widgets
+
+    make_progressbar(progress=None, num_files=0)
+        Create progressbar
+
+    process_config(config_file, args)
+        Read an INI style config
     
     read_masks(masks_file)
     
