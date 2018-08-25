@@ -57,6 +57,7 @@ optional arguments:
                         Input directory to process
   --output-dir OUTPUT_DIR, -o OUTPUT_DIR
                         Output directory for processed files
+  --config CONFIG       Config in INI format
   --codec CODEC, -c CODEC
                         Codec to write files with
   --masks [MASKS [MASKS ...]], -m [MASKS [MASKS ...]]
