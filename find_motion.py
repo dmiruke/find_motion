@@ -757,7 +757,7 @@ def read_masks(masks_file):
 
 
 def set_log_file(input_dir, output_dir=None):
-    return os.path.join(output_dir if output_dir is not None else input_dir, 'progress.log')
+    return os.path.join(output_dir if output_dir is not None else input_dir if input_dir is not None else '.', 'progress.log')
 
 
 def run(args):
@@ -842,7 +842,7 @@ def get_args(parser):
     """
     parser.add_argument('files', nargs='*', help='Video files to find motion in')
 
-    parser.add_argument('--input-dir', '-i', required=True, help='Input directory to process')
+    parser.add_argument('--input-dir', '-i', help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
 
     parser.add_argument('--config', help='Config in INI format')
