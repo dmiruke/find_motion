@@ -831,7 +831,7 @@ def process_config(config_file, args):
             else:
                 raise ValueError('{} must be True or False'.format(setting))
         if setting == 'masks':
-            value = ast.literal_eval(value)
+            value = literal_eval(value)
         args.__setattr__(setting, value)
     return args # XXX
 
