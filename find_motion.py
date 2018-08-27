@@ -44,6 +44,8 @@ TODO: add other output streams - not just to files, to cloud, sFTP server or ema
 TODO: process certain times of day first - based on creation time or a time pulled from filename (allowing format string to parse time)
 
 TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
+
+TODO: type hints - XXX (e.g. do lists better)
 """
 
 import os
@@ -52,10 +54,12 @@ import signal
 import time
 import math
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from configparser import ConfigParser
 from ast import literal_eval
 import json
+
+import typing
 
 from collections import deque
 
@@ -97,9 +101,7 @@ class VideoInfo(object):
     """
     Class to read in a video, and get metadata out
     """
-    def __init__(self, filename=None, log_level=logging.INFO):   
-        pass
-
+    def __init__(self, filename: str=None, log_level=logging.INFO) -> None:
         self.filename = filename
         self._load_video()
 
@@ -126,16 +128,73 @@ class VideoInfo(object):
         return
 
 
+class VideoFrame(object):
+    """
+    encapsulate frame stuff here, out of main video class
+    """
+    def __init__(self, frame) -> None:
+        self.frame = frame
+        self.raw = self.frame.copy()
+        self.in_cache = False
+        self.contours = None
+        self.frame_delta = None
+        self.thresh = None
+        self.blur = None
+
+
+    def diff(self, ref_frame):
+        """
+        Find the diff between this frame and the reference frame
+        """
+        self.frame_delta = cv2.absdiff(self.blur, cv2.convertScaleAbs(ref_frame))
+
+
+    def threshold(self, thresh):
+        """
+        Find the threshold of the diff
+        """
+        self.thresh = cv2.threshold(self.frame_delta, thresh, 255, cv2.THRESH_BINARY)[1]
+
+
+    def find_contours(self):
+        """
+        Find edges of the shapes in the thresholded image
+        """
+        # dilate the thresholded image to fill in holes, then find contours
+        # on thresholded image
+        self.thresh = cv2.dilate(self.thresh, None, iterations=2)
+        cnts = cv2.findContours(self.thresh.copy(), cv2.RETR_EXTERNAL,
+                                cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if imutils.is_cv2() else cnts[1]
+        self.contours = cnts
+
+
+    def cleanup(self):
+        """
+        Actively destroy the frame
+        """
+        log.debug('Cleanup frame')
+        for attr in ('frame', 'thresh', 'contours', 'frame_delta', 'blur'):
+            if hasattr(self, attr):
+                delattr(self, attr)
+        if self.in_cache:
+            log.debug('Frame in cache, not cleaning up up raw frame or deleting frame object')
+            return
+        if hasattr(self, 'raw'):
+            del self.raw
+        del self
+
+
 class VideoMotion(object):
     """
     Class to read in a video, detect motion in it, and write out just the motion to a new file
     """
     # pylint: disable=too-many-instance-attributes,too-many-arguments
-    def __init__(self, filename=None, outdir=None, fps=30,
-                 box_size=100, min_box_scale=50, cache_time=2.0, min_time=0.5,
-                 threshold=7, avg=0.1, blur_scale=20,
-                 mask_areas=None, show=False,
-                 codec='MJPG', log_level=logging.INFO, mem=False):
+    def __init__(self, filename: str=None, outdir: str='.', fps: int=30,
+                 box_size: int=100, min_box_scale: int=50, cache_time: float=2.0, min_time: float=0.5,
+                 threshold: int=7, avg: float=0.1, blur_scale: int=20,
+                 mask_areas: list=None, show: bool=False,
+                 codec: str='MJPG', log_level=logging.INFO, mem: bool=False) -> None:
         self.filename = filename
 
         if self.filename is None:
@@ -143,55 +202,55 @@ class VideoMotion(object):
 
         log.debug("Reading from {}".format(self.filename))
 
-        self.outfile = None
-        self.outfile_name = None
-        self.outdir = outdir
+        self.outfile: cv2.VideoWriter
+        self.outfile_name: str
+        self.outdir: str = outdir
 
-        self.fps = fps
-        self.box_size = box_size
-        self.min_box_scale = min_box_scale
-        self.min_area = None
-        self.max_area = None
-        self.gaussian_scale = blur_scale
+        self.fps: int = fps
+        self.box_size: int = box_size
+        self.min_box_scale: int = min_box_scale
+        self.min_area: int
+        self.max_area: int
+        self.gaussian_scale: int = blur_scale
         self.cache_frames = int(cache_time * fps)
-        self.min_movement_frames = int(min_time * fps)
-        self.delta_thresh = threshold
-        self.avg = avg
-        self.mask_areas = mask_areas if mask_areas is not None else []
-        self.show = show
+        self.min_movement_frames: int = int(min_time * fps)
+        self.delta_thresh: int = threshold
+        self.avg: float = avg
+        self.mask_areas: typing.List[typing.Any] = mask_areas if mask_areas is not None else []
+        self.show: bool = show
 
         log.debug('Caching {} frames, min motion {} frames'.format(self.cache_frames, self.min_movement_frames))
 
-        self.codec = codec
-        self.debug = log_level is logging.DEBUG
-        self.mem = mem
+        self.codec: str = codec
+        self.debug: bool = log_level is logging.DEBUG
+        self.mem: bool = mem
 
         log.debug(self.codec)
 
         # initialised in _load_video
-        self.amount_of_frames = None
-        self.frame_width = None
-        self.frame_height = None
-        self.scale = None
+        self.amount_of_frames: int
+        self.frame_width: int
+        self.frame_height: int
+        self.scale: int
 
-        self.current_frame = None
-        self.ref_frame = None
-        self.frame_cache = None
+        self.current_frame: VideoFrame
+        self.ref_frame: VideoFrame
+        self.frame_cache: typing.Deque[VideoFrame]
 
-        self.wrote_frames = False
-        self.err_msg = None
+        self.wrote_frames: bool
+        self.err_msg: str
         self.log = None # XXX - make logger that returns output on return for logging by calling process, if that's how we're called
 
         self._calc_min_area()
         self._make_gaussian()
         self._load_video()
 
-        self.movement = False
-        self.movement_decay = 0
-        self.movement_counter = 0
+        self.movement: bool = False
+        self.movement_decay: int = 0
+        self.movement_counter: int = 0
 
 
-    def _calc_min_area(self, min_box_scale=50):
+    def _calc_min_area(self):
         """
         Set the minimum motion area based on the box size
         """
@@ -288,6 +347,8 @@ class VideoMotion(object):
             cv2.imshow('frame', frame.frame)
         if self.outfile is None:
             self._make_outfile()
+            self.outfile:cv2.VideoWriter
+
         self.outfile.write(frame.raw)
 
 
@@ -298,6 +359,8 @@ class VideoMotion(object):
         self.wrote_frames = True
         if self.outfile is None:
             self._make_outfile()
+            self.outfile:cv2.VideoWriter
+
         self.outfile.write(frame)
 
 
@@ -350,7 +413,7 @@ class VideoMotion(object):
 
 
     @staticmethod
-    def scale_area(area, scale):
+    def scale_area(area, scale: int):
         """
         Scale the area by the scale factor
         """
@@ -464,7 +527,7 @@ class VideoMotion(object):
 
 
     @staticmethod
-    def key_pressed(key):
+    def key_pressed(key: str):
         """
         Say if we pressed the key we asked for
         """
@@ -539,64 +602,7 @@ class VideoMotion(object):
         return self.wrote_frames, self.err_msg
 
 
-class VideoFrame(object):
-    """
-    encapsulate frame stuff here, out of main video class
-    """
-    def __init__(self, frame):
-        self.frame = frame
-        self.raw = self.frame.copy()
-        self.in_cache = False
-        self.contours = None
-        self.frame_delta = None
-        self.thresh = None
-        self.blur = None
-
-
-    def diff(self, ref_frame):
-        """
-        Find the diff between this frame and the reference frame
-        """
-        self.frame_delta = cv2.absdiff(self.blur, cv2.convertScaleAbs(ref_frame))
-
-
-    def threshold(self, thresh):
-        """
-        Find the threshold of the diff
-        """
-        self.thresh = cv2.threshold(self.frame_delta, thresh, 255, cv2.THRESH_BINARY)[1]
-
-
-    def find_contours(self):
-        """
-        Find edges of the shapes in the thresholded image
-        """
-        # dilate the thresholded image to fill in holes, then find contours
-        # on thresholded image
-        self.thresh = cv2.dilate(self.thresh, None, iterations=2)
-        cnts = cv2.findContours(self.thresh.copy(), cv2.RETR_EXTERNAL,
-                                cv2.CHAIN_APPROX_SIMPLE)
-        cnts = cnts[0] if imutils.is_cv2() else cnts[1]
-        self.contours = cnts
-
-
-    def cleanup(self):
-        """
-        Actively destroy the frame
-        """
-        log.debug('Cleanup frame')
-        for attr in ('frame', 'thresh', 'contours', 'frame_delta', 'blur'):
-            if hasattr(self, attr):
-                delattr(self, attr)
-        if self.in_cache:
-            log.debug('Frame in cache, not cleaning up up raw frame or deleting frame object')
-            return
-        if hasattr(self, 'raw'):
-            del self.raw
-        del self
-
-
-def find_files(directory):
+def find_files(directory: str):
     """
     Finds files in the directory, recursively, sorts them by last modified time
     """
@@ -604,7 +610,7 @@ def find_files(directory):
     return OrderedSet([f[0] for f in sorted([(f, os.path.getmtime(f)) for f in files], key=lambda f: f[1])])
 
 
-def run_vid(filename, **kwargs):
+def run_vid(filename : str, **kwargs):
     """
     Video creation and runner function to pass to multiprocessing pool
     """
@@ -634,7 +640,7 @@ class DummyProgressBar(object):
         pass
 
 
-def get_progress(log_file):
+def get_progress(log_file: str):
     """
     Load the progress log file, get the list of files
     """
@@ -646,13 +652,13 @@ def get_progress(log_file):
         return []
 
 
-def run_pool(job=None, processes=2, files=None, pbar=None, progress_log=None):
+def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=list(), pbar:typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None):
     """
     Create and run a pool of workers
     """
-    num_files = len(files)
+    num_files: int = len(list(files))
     done = 0
-    files_written = set()
+    files_written: typing.Set = set()
     results = []
 
     try:
@@ -684,13 +690,13 @@ def run_pool(job=None, processes=2, files=None, pbar=None, progress_log=None):
     pool.terminate()
 
 
-def run_map(job, files, pbar, progress_log):
+def run_map(job: partial, files: list, pbar, progress_log: typing.TextIO):
     files_processed = map(job, files)
 
     done = 0
 
     try:
-        for status, filename in files_processed:
+        for status, filename, err in files_processed:
             if pbar is not None:
                 done += 1
                 pbar.update(done)
@@ -714,7 +720,7 @@ def main():
     run(args)
 
 
-def make_pbar_widgets(num_files):
+def make_pbar_widgets(num_files: int):
     """
     Create progressbar widgets
     """
@@ -727,7 +733,7 @@ def make_pbar_widgets(num_files):
     ]
 
 
-def make_progressbar(progress=None, num_files=0):
+def make_progressbar(progress: bool=False, num_files: int=0):
     """
     Create progressbar
     """
@@ -738,7 +744,7 @@ def make_progressbar(progress=None, num_files=0):
                                   ) if progress else DummyProgressBar()
 
 
-def read_masks(masks_file):
+def read_masks(masks_file: str):
     try:
         with open(masks_file, 'r') as mf:
             masks = json.load(mf)
@@ -756,11 +762,11 @@ def read_masks(masks_file):
         return []
 
 
-def set_log_file(input_dir, output_dir=None):
+def set_log_file(input_dir: str=None, output_dir: str=None):
     return os.path.join(output_dir if output_dir is not None else input_dir if input_dir is not None else '.', 'progress.log')
 
 
-def run(args):
+def run(args: Namespace):
     """
     Secondary entry point to allow running from a different app using an argparse Namespace
     """
@@ -810,7 +816,7 @@ def run(args):
                 run_map(job, files, pbar, progress_log)
 
 
-def process_config(config_file, args):
+def process_config(config_file: str, args: Namespace):
     """
     Read an INI style config
 
@@ -819,24 +825,25 @@ def process_config(config_file, args):
     config = ConfigParser()
     config.read(config_file)
     for setting, value in config['settings'].items():
+        use_value: typing.Any = value
         if setting in ('processes', 'blur_scale', 'min_box_scale', 'threshold', 'fps'):
-            value = int(value)
+            use_value = int(value)
         if setting in ('mintime', 'cachetime', 'avg'):
-            value = float(value)
+            use_value = float(value)
         if setting in ('mem', 'progress', 'debug', 'show'):
             if value == 'True':
-                value = True
+                use_value = True
             elif value == 'False':
-                value = False
+                use_value = False
             else:
                 raise ValueError('{} must be True or False'.format(setting))
         if setting == 'masks':
-            value = literal_eval(value)
-        args.__setattr__(setting, value)
+            use_value = literal_eval(value)
+        args.__setattr__(setting, use_value)
     return args # XXX
 
 
-def get_args(parser):
+def get_args(parser: ArgumentParser):
     """
     Set how to process command line arguments
     """
