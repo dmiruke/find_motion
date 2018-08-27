@@ -27,6 +27,7 @@ TODO: think about r/g/b channel motion detection, instead of just grayscale, or 
 TODO: make frame_cache its own class so we can do cleanup etc. more neatly
 
 TODO: profile memory use without explicit cleanup, see if we can rely on GC to keep memory use in line
+    explicit cleanup halves memory use, but seems to affect performance (2%?)
 
 TODO: scale box sizes by location in frame - gradient, or custom matrix
 
@@ -44,8 +45,6 @@ TODO: add other output streams - not just to files, to cloud, sFTP server or ema
 TODO: process certain times of day first - based on creation time or a time pulled from filename (allowing format string to parse time)
 
 TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
-
-TODO: type hints - XXX (e.g. do lists better)
 """
 
 import os
@@ -190,7 +189,7 @@ class VideoMotion(object):
     Class to read in a video, detect motion in it, and write out just the motion to a new file
     """
     # pylint: disable=too-many-instance-attributes,too-many-arguments
-    def __init__(self, filename: str=None, outdir: str='.', fps: int=30,
+    def __init__(self, filename: str=None, outdir: str='', fps: int=30,
                  box_size: int=100, min_box_scale: int=50, cache_time: float=2.0, min_time: float=0.5,
                  threshold: int=7, avg: float=0.1, blur_scale: int=20,
                  mask_areas: list=None, show: bool=False,
@@ -202,15 +201,15 @@ class VideoMotion(object):
 
         log.debug("Reading from {}".format(self.filename))
 
-        self.outfile: cv2.VideoWriter # type: ignore
-        self.outfile_name: str
+        self.outfile = None # type: ignore
+        self.outfile_name: str = ''
         self.outdir: str = outdir
 
         self.fps: int = fps
         self.box_size: int = box_size
         self.min_box_scale: int = min_box_scale
-        self.min_area: int
-        self.max_area: int
+        self.min_area: int = -1
+        self.max_area: int = -1
         self.gaussian_scale: int = blur_scale
         self.cache_frames = int(cache_time * fps)
         self.min_movement_frames: int = int(min_time * fps)
@@ -228,17 +227,17 @@ class VideoMotion(object):
         log.debug(self.codec)
 
         # initialised in _load_video
-        self.amount_of_frames: int
-        self.frame_width: int
-        self.frame_height: int
-        self.scale: int
+        self.amount_of_frames: int = -1
+        self.frame_width: int = -1
+        self.frame_height: int = -1
+        self.scale: int = -1
 
         self.current_frame: VideoFrame
         self.ref_frame: VideoFrame
         self.frame_cache: typing.Deque[VideoFrame]
 
-        self.wrote_frames: bool
-        self.err_msg: str
+        self.wrote_frames: bool = False
+        self.err_msg: str = ''
         self.log = None # XXX - make logger that returns output on return for logging by calling process, if that's how we're called
 
         self._calc_min_area()
@@ -288,11 +287,11 @@ class VideoMotion(object):
         """
         Create an output file based on the input filename and the output directory
         """
-        if self.outdir is None:
+        if self.outdir == '':
             self.outfile_name = self.filename + '_motion.avi'
         else:
-            self.outfile_name = os.path.join(self.outdir, os.path.basename(self.filename)) \
-                                + '_motion.avi'
+            self.outfile_name = os.path.join(self.outdir,
+                                             os.path.basename(self.filename)) + '_motion.avi'
 
         if self.debug:
             log.debug("Writing to {}".format(self.outfile_name))
@@ -319,8 +318,8 @@ class VideoMotion(object):
         small = imutils.resize(frame.raw, width=self.box_size)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         frame.blur = cv2.GaussianBlur(gray, self.gaussian, 0)
-        del small
-        del gray
+#        del small
+#        del gray
 
 
     def read(self):
@@ -342,12 +341,13 @@ class VideoMotion(object):
         Initialise the output file if necessary
         """
         frame = self.current_frame if frame is None else frame
-        self.wrote_frames = True
+        
         if self.show:
             cv2.imshow('frame', frame.frame)
-        if self.outfile is None:
+
+        if not self.wrote_frames:
             self._make_outfile()
-            self.outfile:cv2.VideoWriter
+            self.wrote_frames = True
 
         self.outfile.write(frame.raw)
 
@@ -356,10 +356,9 @@ class VideoMotion(object):
         """
         Output a raw frame, not a VideoFrame
         """
-        self.wrote_frames = True
-        if self.outfile is None:
+        if not self.wrote_frames:
             self._make_outfile()
-            self.outfile:cv2.VideoWriter
+            self.wrote_frames = True
 
         self.outfile.write(frame)
 
@@ -377,7 +376,7 @@ class VideoMotion(object):
                 self.movement_decay = self.cache_frames
 
                 for frame in self.frame_cache:
-                    if frame is not None:
+                   if frame is not None:
                         self.output_raw_frame(frame.raw)
                         frame.in_cache = False
                         frame.cleanup()
@@ -395,6 +394,7 @@ class VideoMotion(object):
             log.debug(cache_size)
             if cache_size == self.cache_frames:
                 log.debug('Clearing first cache entry')
+#                self.frame_cache.popleft()
                 delete_frame = self.frame_cache.popleft()
                 if delete_frame is not None:
                     delete_frame.in_cache = False
@@ -488,7 +488,7 @@ class VideoMotion(object):
                 self.movement_counter += 1
                 self.movement = True
 
-        del frame.contours
+#        del frame.contours
 
         if not self.movement:
             self.movement_counter = 0
@@ -558,8 +558,6 @@ class VideoMotion(object):
         self.frame_cache.clear()
         del self.frame_cache
 
-        if self.show:
-            cv2.destroyAllWindows()
         return
 
 
@@ -598,6 +596,7 @@ class VideoMotion(object):
         log.debug('Cleaning up video')
 
         self.cleanup()
+#        self.frame_cache.clear()
 
         return self.wrote_frames, self.err_msg
 
