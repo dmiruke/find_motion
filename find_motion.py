@@ -202,7 +202,7 @@ class VideoMotion(object):
 
         log.debug("Reading from {}".format(self.filename))
 
-        self.outfile: cv2.VideoWriter
+        self.outfile: cv2.VideoWriter # type: ignore
         self.outfile_name: str
         self.outdir: str = outdir
 
@@ -531,7 +531,7 @@ class VideoMotion(object):
         """
         Say if we pressed the key we asked for
         """
-        return cv2.waitKey(1) & 0xFF == ord(key)
+        return cv2.waitKey(1) & 0xFF == ord(key) # type: ignore
 
 
     def cleanup(self):
