@@ -57,6 +57,7 @@ from argparse import ArgumentParser, Namespace
 from configparser import ConfigParser
 from ast import literal_eval
 import json
+from jsonschema import validate
 
 import typing
 
@@ -87,6 +88,22 @@ LINE_BUFFERED = 1
 BLACK = (0, 0, 0)
 RED = (0, 0, 255)
 GREEN = (0, 255, 0)
+
+MASK_SCHEMA = {
+    "type" : "array",
+    "items" : {
+        "type" : "array",
+        "minItems" : 2,
+        "items" : {
+            "type" : "array",
+            "minItems" : 2,
+            "maxItems" : 2,
+            "items" : {
+                "type" : "integer"
+            }
+        }
+    }
+}
 
 
 def init_worker():
@@ -747,7 +764,7 @@ def read_masks(masks_file: str):
     try:
         with open(masks_file, 'r') as mf:
             masks = json.load(mf)
-
+            validate(masks, MASK_SCHEMA)
             out_masks = []
 
             for mask in masks:
@@ -776,7 +793,8 @@ def run(args: Namespace):
         log.setLevel(logging.DEBUG)
 
     if args.config:
-        args = process_config(args.config, args)
+        log.debug('Processing config: {}'.format(args.config))
+        process_config(args.config, args)
 
     masks = args.masks if args.masks else []
 
@@ -839,7 +857,8 @@ def process_config(config_file: str, args: Namespace):
         if setting == 'masks':
             use_value = literal_eval(value)
         args.__setattr__(setting, use_value)
-    return args # XXX
+    log.debug(vars(args))
+    return args
 
 
 def get_args(parser: ArgumentParser):
@@ -851,9 +870,9 @@ def get_args(parser: ArgumentParser):
     parser.add_argument('--input-dir', '-i', help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
 
-    parser.add_argument('--config', help='Config in INI format')
+    parser.add_argument('--config', '-c', help='Config in INI format')
 
-    parser.add_argument('--codec', '-c', default='MP42', help='Codec to write files with')
+    parser.add_argument('--codec', '-k', default='MP42', help='Codec to write files with')
     parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video')
     parser.add_argument('--masks_file', help='File holding mask coordinates (JSON)')
 
