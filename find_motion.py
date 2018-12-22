@@ -45,6 +45,7 @@ TODO: process certain times of day first - based on creation time or a time pull
 TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
 """
 
+import sys
 import os
 
 import signal
@@ -730,8 +731,10 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig()
+    if args.debug:
+        log.setLevel(logging.DEBUG)
 
-    run(args)
+    run(args, parser.print_help)
 
 
 def make_pbar_widgets(num_files: int):
@@ -780,19 +783,24 @@ def set_log_file(input_dir: str=None, output_dir: str=None):
     return os.path.join(output_dir if output_dir is not None else input_dir if input_dir is not None else '.', 'progress.log')
 
 
-def run(args: Namespace):
+def run(args: Namespace, print_help: typing.Callable=lambda x: None):
     """
     Secondary entry point to allow running from a different app using an argparse Namespace
     """
-    if args.progress:
-        progressbar.streams.wrap_stderr()
+    if args.config:
+        log.debug('Processing config: {}'.format(args.config))
+        process_config(args.config, args)
 
     if args.debug:
         log.setLevel(logging.DEBUG)
 
-    if args.config:
-        log.debug('Processing config: {}'.format(args.config))
-        process_config(args.config, args)
+    if args.progress:
+        progressbar.streams.wrap_stderr()
+
+    if not args.files and not args.input_dir:
+        # no input: help message, exit
+        print_help()
+        sys.exit(2)    
 
     masks = args.masks if args.masks else []
 
