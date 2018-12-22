@@ -3,3 +3,4 @@ mem_top
 orderedset
 opencv-python
 imutils
+numpy
