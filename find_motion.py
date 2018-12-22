@@ -36,8 +36,6 @@ TODO: look at more OpenCV functions, e.g.
     https://docs.opencv.org/3.2.0/dd/d73/classcv_1_1bioinspired_1_1RetinaFastToneMapping.html
     https://docs.opencv.org/3.2.0/d9/d7a/classcv_1_1xphoto_1_1WhiteBalancer.html
 
-TODO: use json_schema to check masks file is the right format
-
 TODO: allow opening from a capture stream instead of a file
 
 TODO: add other output streams - not just to files, to cloud, sFTP server or email
