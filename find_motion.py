@@ -810,12 +810,16 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None):
     log.debug(masks)
 
     log_file = set_log_file(args.input_dir, args.output_dir)
-    done_files = get_progress(log_file)
+
 
     files = OrderedSet(args.files)
-    files.update(find_files(args.input_dir))
-    
-    files.difference_update(done_files)
+    files.update(find_files(args.input_dir))    
+
+    if not args.ignore_progress:
+        done_files = get_progress(log_file)
+        files.difference_update(done_files)
+    else:
+        log.debug('Ignoring previous progress, processing all found files')
 
     num_files = len(files)
 
@@ -853,7 +857,7 @@ def process_config(config_file: str, args: Namespace):
             use_value = int(value)
         if setting in ('mintime', 'cachetime', 'avg'):
             use_value = float(value)
-        if setting in ('mem', 'progress', 'debug', 'show'):
+        if setting in ('mem', 'progress', 'debug', 'show', 'ignore_progress'):
             if value == 'True':
                 use_value = True
             elif value == 'False':
@@ -863,7 +867,7 @@ def process_config(config_file: str, args: Namespace):
         if setting == 'masks':
             use_value = literal_eval(value)
         args.__setattr__(setting, use_value)
-    log.debug(vars(args))
+    log.debug(str(vars(args)))
     return args
 
 
@@ -875,6 +879,7 @@ def get_args(parser: ArgumentParser):
 
     parser.add_argument('--input-dir', '-i', help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
+    parser.add_argument('--ignore-progress', '-I', action='store_true', default=False, help='Ignore progress log')
 
     parser.add_argument('--config', '-c', help='Config in INI format')
 
@@ -882,8 +887,8 @@ def get_args(parser: ArgumentParser):
     parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video')
     parser.add_argument('--masks_file', help='File holding mask coordinates (JSON)')
 
-    parser.add_argument('--blur_scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width (used as 1/blur_scale)')
-    parser.add_argument('--min_box_scale', '-B', type=int, default=50, help='Scale of minimum motion compared to video width (used as 1/min_box_scale')
+    parser.add_argument('--blur-scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width (used as 1/blur_scale)')
+    parser.add_argument('--min-box-scale', '-B', type=int, default=50, help='Scale of minimum motion compared to video width (used as 1/min_box_scale')
     parser.add_argument('--threshold', '-t', type=int, default=12, help='Threshold for change in grayscale')
     parser.add_argument('--mintime', '-M', type=float, default=0.5, help='Minimum time for motion, in seconds')
     parser.add_argument('--cachetime', '-C', type=float, default=1.0, help='How long to cache, in seconds')
