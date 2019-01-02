@@ -70,8 +70,10 @@ import progressbar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
+
 from numpy import array as np_array
 from numpy import int32 as np_int32
+from numpy import ndarray as np_ndarray
 
 import cv2
 import imutils
@@ -122,7 +124,7 @@ class VideoInfo(object):
         self._load_video()
 
 
-    def _load_video(self):
+    def _load_video(self) -> None:
         """
         Open the input video file, get the video info
         """
@@ -130,7 +132,7 @@ class VideoInfo(object):
         self._get_video_info()
 
 
-    def _get_video_info(self):
+    def _get_video_info(self) -> None:
         """
         Set some metrics from the video
         """
@@ -149,30 +151,30 @@ class VideoFrame(object):
     encapsulate frame stuff here, out of main video class
     """
     def __init__(self, frame) -> None:
-        self.frame = frame
-        self.raw = self.frame.copy()
-        self.in_cache = False
+        self.frame: np_ndarray = frame
+        self.raw: np_ndarray = self.frame.copy()
+        self.in_cache: bool = False
         self.contours = None
-        self.frame_delta = None
-        self.thresh = None
-        self.blur = None
+        self.frame_delta: np_ndarray = None
+        self.thresh: np_ndarray = None
+        self.blur: np_ndarray = None
 
 
-    def diff(self, ref_frame):
+    def diff(self, ref_frame) -> None:
         """
         Find the diff between this frame and the reference frame
         """
         self.frame_delta = cv2.absdiff(self.blur, cv2.convertScaleAbs(ref_frame))
 
 
-    def threshold(self, thresh):
+    def threshold(self, thresh) -> None:
         """
         Find the threshold of the diff
         """
         self.thresh = cv2.threshold(self.frame_delta, thresh, 255, cv2.THRESH_BINARY)[1]
 
 
-    def find_contours(self):
+    def find_contours(self) -> None:
         """
         Find edges of the shapes in the thresholded image
         """
@@ -185,7 +187,7 @@ class VideoFrame(object):
         self.contours = cnts
 
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Actively destroy the frame
         """
@@ -210,7 +212,7 @@ class VideoMotion(object):
                  box_size: int=100, min_box_scale: int=50, cache_time: float=2.0, min_time: float=0.5,
                  threshold: int=7, avg: float=0.1, blur_scale: int=20,
                  mask_areas: list=None, show: bool=False,
-                 codec: str='MJPG', log_level=logging.INFO, mem: bool=False) -> None:
+                 codec: str='MJPG', log_level: int=logging.INFO, mem: bool=False) -> None:
         self.filename = filename
 
         if self.filename is None:
@@ -218,7 +220,7 @@ class VideoMotion(object):
 
         log.debug("Reading from {}".format(self.filename))
 
-        self.outfile = None # type: ignore
+        self.outfile: cv2.VideoWriter = None # type: ignore
         self.outfile_name: str = ''
         self.outdir: str = outdir
 
@@ -247,7 +249,7 @@ class VideoMotion(object):
         self.amount_of_frames: int = -1
         self.frame_width: int = -1
         self.frame_height: int = -1
-        self.scale: int = -1
+        self.scale: float = -1
 
         self.current_frame: VideoFrame
         self.ref_frame: VideoFrame
@@ -266,14 +268,14 @@ class VideoMotion(object):
         self.movement_counter: int = 0
 
 
-    def _calc_min_area(self):
+    def _calc_min_area(self) -> None:
         """
         Set the minimum motion area based on the box size
         """
         self.min_area = int(math.pow(self.box_size/self.min_box_scale, 2))
 
 
-    def _load_video(self):
+    def _load_video(self) -> None:
         """
         Open the input video file, set up the ref frame and frame cache, get the video info and set the scale
         """
@@ -283,10 +285,10 @@ class VideoMotion(object):
 
         self._get_video_info()
         self.scale = self.box_size / self.frame_width
-        self.max_area = int((self.frame_width * self.frame_height)/2) * self.scale
+        self.max_area = int((self.frame_width * self.frame_height)/2 * self.scale)
 
 
-    def _get_video_info(self):
+    def _get_video_info(self) -> None:
         """
         Set some metrics from the video
         """
@@ -300,7 +302,7 @@ class VideoMotion(object):
         return
 
 
-    def _make_outfile(self):
+    def _make_outfile(self) -> None:
         """
         Create an output file based on the input filename and the output directory
         """
@@ -318,7 +320,7 @@ class VideoMotion(object):
                                        self.fps, (self.frame_width, self.frame_height))
 
 
-    def _make_gaussian(self):
+    def _make_gaussian(self) -> None:
         """
         Make a gaussian for the blur using the box size as a guide
         """
@@ -327,7 +329,7 @@ class VideoMotion(object):
         self.gaussian = (gaussian_size, gaussian_size)
 
 
-    def blur_frame(self, frame=None):
+    def blur_frame(self, frame=None) -> None:
         """
         Shrink, grayscale and blur the frame
         """
@@ -339,7 +341,7 @@ class VideoMotion(object):
 #        del gray
 
 
-    def read(self):
+    def read(self) -> bool:
         """
         Read a frame from the capture member
         """
@@ -351,7 +353,7 @@ class VideoMotion(object):
         return True
 
 
-    def output_frame(self, frame=None):
+    def output_frame(self, frame: VideoFrame=None) -> None:
         """
         Put a frame out to screen (if required) and file
 
@@ -369,7 +371,7 @@ class VideoMotion(object):
         self.outfile.write(frame.raw)
 
 
-    def output_raw_frame(self, frame=None):
+    def output_raw_frame(self, frame: VideoFrame=None) -> None:
         """
         Output a raw frame, not a VideoFrame
         """
@@ -380,7 +382,7 @@ class VideoMotion(object):
         self.outfile.write(frame)
 
 
-    def decide_output(self):
+    def decide_output(self) -> None:
         """
         Decide if we are going to put out this frame
         """
@@ -408,7 +410,7 @@ class VideoMotion(object):
         else:
             log.debug('No movement, putting in cache')
             cache_size = len(self.frame_cache)
-            log.debug(cache_size)
+            log.debug(str(cache_size))
             if cache_size == self.cache_frames:
                 log.debug('Clearing first cache entry')
 #                self.frame_cache.popleft()
@@ -422,7 +424,7 @@ class VideoMotion(object):
             self.current_frame.in_cache = True
 
 
-    def is_open(self):
+    def is_open(self) -> bool:
         """
         Return if the capture member is open
         """
@@ -430,14 +432,14 @@ class VideoMotion(object):
 
 
     @staticmethod
-    def scale_area(area, scale: int):
+    def scale_area(area: list, scale: float) -> list:
         """
         Scale the area by the scale factor
         """
         return [(int(a[0] * scale), int(a[1] * scale)) for a in area]
 
 
-    def mask_off_areas(self, frame=None):
+    def mask_off_areas(self, frame: VideoFrame=None):
         """
         Draw black polygons over the masked off areas
         """
@@ -456,7 +458,7 @@ class VideoMotion(object):
                                    BLACK)
 
 
-    def find_diff(self, frame=None):
+    def find_diff(self, frame: VideoFrame=None) -> None:
         """
         Find the difference between this frame and the moving average
 
@@ -479,7 +481,7 @@ class VideoMotion(object):
         frame.find_contours()
 
 
-    def find_movement(self, frame=None):
+    def find_movement(self, frame: VideoFrame=None) -> None:
         """
         Locate contours that are big enough to count as movement
         """
@@ -513,7 +515,7 @@ class VideoMotion(object):
         return
 
 
-    def draw_text(self, frame=None):
+    def draw_text(self, frame: VideoFrame=None) -> None:
         """
         Put the status text on the frame
         """
@@ -527,7 +529,7 @@ class VideoMotion(object):
         return
 
 
-    def make_box(self, contour, frame=None):
+    def make_box(self, contour, frame: VideoFrame=None) -> tuple:
         """
         Draw a green bounding box on the frame
         """
@@ -538,20 +540,20 @@ class VideoMotion(object):
         return area
 
 
-    def draw_box(self, area, frame=None):
+    def draw_box(self, area, frame: VideoFrame=None) -> None:
         frame = self.current_frame if frame is None else frame
-        cv2.rectangle(frame.frame, *self.scale_area(area, 1/self.scale), GREEN, 2)
+        cv2.rectangle(frame.frame, *self.scale_area(area, 1/self.scale), GREEN, 2.0)
 
 
     @staticmethod
-    def key_pressed(key: str):
+    def key_pressed(key: str) -> bool:
         """
         Say if we pressed the key we asked for
         """
         return cv2.waitKey(1) & 0xFF == ord(key) # type: ignore
 
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Close the input file, output file, and get rid of OpenCV windows
         """
@@ -578,7 +580,7 @@ class VideoMotion(object):
         return
 
 
-    def find_motion(self):
+    def find_motion(self) -> tuple:
         """
         Main loop. Find motion in frames.
         """
@@ -618,7 +620,7 @@ class VideoMotion(object):
         return self.wrote_frames, self.err_msg
 
 
-def find_files(directory: str):
+def find_files(directory: str) -> OrderedSet:
     """
     Finds files in the directory, recursively, sorts them by last modified time
     """
@@ -626,7 +628,7 @@ def find_files(directory: str):
     return OrderedSet([f[0] for f in sorted([(f, os.path.getmtime(f)) for f in files], key=lambda f: f[1])])
 
 
-def run_vid(filename : str, **kwargs):
+def run_vid(filename : str, **kwargs) -> tuple:
     """
     Video creation and runner function to pass to multiprocessing pool
     """
@@ -643,20 +645,20 @@ class DummyProgressBar(object):
     """
     A pretend progress bar
     """
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
-    def __exit__(self, *args):
+    def __exit__(self, *args) -> None:
         pass
 
     def __enter__(self, *args):
         return self
 
-    def update(self, *args, **kwargs):
+    def update(self, *args, **kwargs) -> None:
         pass
 
 
-def get_progress(log_file: str):
+def get_progress(log_file: str) -> set:
     """
     Load the progress log file, get the list of files
     """
@@ -665,17 +667,20 @@ def get_progress(log_file: str):
             done_files = {f.strip() for f in progress_log.readlines()}
             return done_files
     except FileNotFoundError:
-        return []
+        return set()
 
 
-def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=list(), pbar:typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None):
+def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=None, pbar:typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None):
     """
     Create and run a pool of workers
     """
+    if not files:
+        raise ValueError('More than 0 files needed')
+
     num_files: int = len(list(files))
-    done = 0
+    done: int = 0
     files_written: typing.Set = set()
-    results = []
+    results: list = []
 
     try:
         pool = Pool(processes=processes, initializer=init_worker)
@@ -706,10 +711,12 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
     pool.terminate()
 
 
-def run_map(job: partial, files: list, pbar, progress_log: typing.TextIO):
-    files_processed = map(job, files)
-
-    done = 0
+def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_log: typing.TextIO):
+    if not files:
+        raise ValueError('More than 0 files needed')
+    
+    files_processed: typing.Iterable[str] = map(job, files)
+    done: int = 0
 
     try:
         for status, filename, err in files_processed:
@@ -727,9 +734,9 @@ def main():
     """
     Main app entry point
     """
-    parser = ArgumentParser()
+    parser: ArgumentParser = ArgumentParser()
     get_args(parser)
-    args = parser.parse_args()
+    args: Namespace = parser.parse_args()
 
     logging.basicConfig()
     if args.debug:
@@ -738,7 +745,7 @@ def main():
     run(args, parser.print_help)
 
 
-def make_pbar_widgets(num_files: int):
+def make_pbar_widgets(num_files: int) -> list:
     """
     Create progressbar widgets
     """
@@ -751,7 +758,7 @@ def make_pbar_widgets(num_files: int):
     ]
 
 
-def make_progressbar(progress: bool=False, num_files: int=0):
+def make_progressbar(progress: bool=False, num_files: int=0) -> progressbar.ProgressBar:
     """
     Create progressbar
     """
@@ -762,7 +769,7 @@ def make_progressbar(progress: bool=False, num_files: int=0):
                                   ) if progress else DummyProgressBar()
 
 
-def read_masks(masks_file: str):
+def read_masks(masks_file: str) -> list:
     try:
         with open(masks_file, 'r') as mf:
             masks = json.load(mf)
@@ -780,11 +787,11 @@ def read_masks(masks_file: str):
         return []
 
 
-def set_log_file(input_dir: str=None, output_dir: str=None):
+def set_log_file(input_dir: str=None, output_dir: str=None) -> str:
     return os.path.join(output_dir if output_dir is not None else input_dir if input_dir is not None else '.', 'progress.log')
 
 
-def run(args: Namespace, print_help: typing.Callable=lambda x: None):
+def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
     """
     Secondary entry point to allow running from a different app using an argparse Namespace
     """
@@ -803,17 +810,16 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None):
         print_help()
         sys.exit(2)    
 
-    masks = args.masks if args.masks else []
+    masks: list = args.masks if args.masks else []
 
     if args.masks_file:
         masks.extend(read_masks(args.masks_file))
 
-    log.debug(masks)
+    log.debug(str(masks))
 
-    log_file = set_log_file(args.input_dir, args.output_dir)
+    log_file: str = set_log_file(args.input_dir, args.output_dir)
 
-
-    files = OrderedSet(args.files)
+    files: OrderedSet = OrderedSet(args.files)
     files.update(find_files(args.input_dir))    
 
     if not args.ignore_progress:
@@ -822,13 +828,13 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None):
     else:
         log.debug('Ignoring previous progress, processing all found files')
 
-    num_files = len(files)
+    num_files: int = len(files)
 
     log.debug('Processing {} files'.format(num_files))
 
     with make_progressbar(args.progress, num_files) as pbar:
         pbar.update(0)
-        with open(log_file, 'a+', LINE_BUFFERED) as progress_log:
+        with open(log_file, 'a', LINE_BUFFERED) as progress_log:
             job = partial(run_vid,
                           outdir=args.output_dir, mask_areas=masks,
                           show=args.show, codec=args.codec,
@@ -844,13 +850,13 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None):
                 run_map(job, files, pbar, progress_log)
 
 
-def process_config(config_file: str, args: Namespace):
+def process_config(config_file: str, args: Namespace) -> Namespace:
     """
     Read an INI style config
 
     TODO: apply argparse validation to the config values
     """
-    config = ConfigParser()
+    config: ConfigParser = ConfigParser()
     config.read(config_file)
     for setting, value in config['settings'].items():
         use_value: typing.Any = value
@@ -872,7 +878,7 @@ def process_config(config_file: str, args: Namespace):
     return args
 
 
-def get_args(parser: ArgumentParser):
+def get_args(parser: ArgumentParser) -> None:
     """
     Set how to process command line arguments
     """
