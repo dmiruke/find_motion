@@ -11,10 +11,6 @@ Caches images for a few frames before and after it detects movement
 """
 
 """
-TODO: deal with 2GB max file output size in OpenCV
-        catch Exception and open another file with a 1-up number
-        mostly dealt with using compression, but should still handle this
-
 TODO: logging in the workers - they should pass messages to the master on completion
     - override log and write output to master in a list
 
@@ -221,6 +217,7 @@ class VideoMotion(object):
         log.debug("Reading from {}".format(self.filename))
 
         self.outfile: cv2.VideoWriter = None # type: ignore
+        self.outfiles: int = 0
         self.outfile_name: str = ''
         self.outdir: str = outdir
 
@@ -306,11 +303,18 @@ class VideoMotion(object):
         """
         Create an output file based on the input filename and the output directory
         """
+        self.outfiles += 1
+
+        if self.outfiles > 1 and self.outfile is not None:
+            self.outfile.release()
+
+        outname = self.filename + '_' + self.outfiles
+
         if self.outdir == '':
-            self.outfile_name = self.filename + '_motion.avi'
+            self.outfile_name = outname + '_motion.avi'
         else:
             self.outfile_name = os.path.join(self.outdir,
-                                             os.path.basename(self.filename)) + '_motion.avi'
+                                             os.path.basename(outname)) + '_motion.avi'
 
         if self.debug:
             log.debug("Writing to {}".format(self.outfile_name))
@@ -368,7 +372,11 @@ class VideoMotion(object):
             self._make_outfile()
             self.wrote_frames = True
 
-        self.outfile.write(frame.raw)
+        try:
+            self.outfile.write(frame.raw)
+        except Exception as e:
+            self._make_outfile()
+            self.outfile.write(frame.raw)
 
 
     def output_raw_frame(self, frame: VideoFrame=None) -> None:
@@ -379,7 +387,11 @@ class VideoMotion(object):
             self._make_outfile()
             self.wrote_frames = True
 
-        self.outfile.write(frame)
+        try:
+            self.outfile.write(frame)
+        except Exception as e:
+            self._make_outfile()
+            self.outfile.write(frame)
 
 
     def decide_output(self) -> None:
