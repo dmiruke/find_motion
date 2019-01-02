@@ -70,7 +70,8 @@ import progressbar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
-import numpy as np
+from numpy import array as np_array
+from numpy import int32 as np_int32
 
 import cv2
 import imutils
@@ -449,7 +450,7 @@ class VideoMotion(object):
                               *scaled_area,
                               BLACK, cv2.FILLED)
             else:
-                pts = np.array(scaled_area, np.int32)
+                pts = np_array(scaled_area, np_int32)
                 cv2.fillConvexPoly(frame.blur,
                                    pts,
                                    BLACK)
