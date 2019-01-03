@@ -201,7 +201,7 @@ class VideoMotion(object):
     Class to read in a video, detect motion in it, and write out just the motion to a new file
     """
     # pylint: disable=too-many-instance-attributes,too-many-arguments
-    def __init__(self, filename: str=None, outdir: str='', fps: int=30,
+    def __init__(self, filename: typing.Union[str, int]=None, outdir: str='', fps: int=30,
                  box_size: int=100, min_box_scale: int=50, cache_time: float=2.0, min_time: float=0.5,
                  threshold: int=7, avg: float=0.1, blur_scale: int=20,
                  mask_areas: list=None, show: bool=False,
@@ -255,7 +255,7 @@ class VideoMotion(object):
 
         self.wrote_frames: bool = False
         self.err_msg: str = ''
-        
+
         self._calc_min_area()
         self._make_gaussian()
         self._load_video()
@@ -308,7 +308,7 @@ class VideoMotion(object):
         if self.outfiles > 1 and self.outfile is not None:
             self.outfile.release()
 
-        outname = self.filename + '_' + str(self.outfiles)
+        outname = str(self.filename) + '_' + str(self.outfiles)
 
         if self.outdir == '':
             self.outfile_name = outname + '_motion.avi'
@@ -640,7 +640,7 @@ def find_files(directory: str) -> OrderedSet:
     return OrderedSet([f[0] for f in sorted([(f, os.path.getmtime(f)) for f in files], key=lambda f: f[1])])
 
 
-def run_vid(filename: str, **kwargs) -> tuple:
+def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
     """
     Video creation and runner function to pass to multiprocessing pool
     """
@@ -743,6 +743,42 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_lo
         log.warning('Ending processing at user request')
 
 
+def run_stream(job: typing.Callable, processes: int, cameras: typing.Iterable[int], progress_log: typing.TextIO):
+    if not cameras:
+        raise ValueError('More than 0 cameras needed')
+
+    num_cameras: int = len(list(cameras))
+    done: int = 0
+    files_written: typing.Set = set()
+    results: list = []
+
+    try:
+        pool = Pool(processes=processes, initializer=init_worker)
+        for camera in cameras:
+            results.append(pool.apply_async(job, (camera,)))
+        while True:
+            files_done = {res.get() for res in results if res.ready()}
+            num_done = len(files_done)
+            if num_done > done:
+                done = num_done
+            if done > 0:
+                new = files_done.difference(files_written)
+                files_written.update(new)
+                for status, stream, err_msg in new:
+                    log.debug('Done {}{}'.format(stream, '' if status else ' (no output)'))
+                    if err_msg:
+                        log.error('Ended processing camera {}: {}'.format(stream, err_msg))
+                    print('Finished streaming from camera {}'.format(stream), file=progress_log)
+            if num_done == num_cameras:
+                log.debug("All processes completed")
+                break
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log.warning('Ending processing at user request')
+
+    pool.terminate()
+
+
 def main():
     """
     Main app entry point
@@ -818,7 +854,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
     if args.progress:
         progressbar.streams.wrap_stderr()
 
-    if not args.files and not args.input_dir:
+    if not args.files and not args.input_dir and not args.cameras:
         # no input: help message, exit
         print_help()
         sys.exit(2)
@@ -832,35 +868,41 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
 
     log_file: str = set_log_file(args.input_dir, args.output_dir)
 
-    files: OrderedSet = OrderedSet(args.files)
-    files.update(find_files(args.input_dir))
+    job = partial(run_vid,
+                  outdir=args.output_dir, mask_areas=masks,
+                  show=args.show, codec=args.codec,
+                  log_level=logging.DEBUG if args.debug else logging.INFO,
+                  mem=args.mem,
+                  blur_scale=args.blur_scale, min_box_scale=args.min_box_scale,
+                  threshold=args.threshold, avg=args.avg,
+                  fps=args.fps, min_time=args.mintime, cache_time=args.cachetime)
 
-    if not args.ignore_progress:
-        done_files = get_progress(log_file)
-        files.difference_update(done_files)
-    else:
-        log.debug('Ignoring previous progress, processing all found files')
-
-    num_files: int = len(files)
-
-    log.debug('Processing {} files'.format(num_files))
-
-    with make_progressbar(args.progress, num_files) as pbar:
-        pbar.update(0)
+    # processing camera streams
+    if args.cameras:
         with open(log_file, 'a', LINE_BUFFERED) as progress_log:
-            job = partial(run_vid,
-                          outdir=args.output_dir, mask_areas=masks,
-                          show=args.show, codec=args.codec,
-                          log_level=logging.DEBUG if args.debug else logging.INFO,
-                          mem=args.mem,
-                          blur_scale=args.blur_scale, min_box_scale=args.min_box_scale,
-                          threshold=args.threshold, avg=args.avg,
-                          fps=args.fps, min_time=args.mintime, cache_time=args.cachetime)
+            run_stream(job, args.processes, args.cameras, progress_log)
+    else:
+        # processing input files
+        files: OrderedSet = OrderedSet(args.files)
+        files.update(find_files(args.input_dir))
 
-            if args.processes > 1:
-                run_pool(job, args.processes, files, pbar, progress_log)
-            else:
-                run_map(job, files, pbar, progress_log)
+        if not args.ignore_progress:
+            done_files = get_progress(log_file)
+            files.difference_update(done_files)
+        else:
+            log.debug('Ignoring previous progress, processing all found files')
+
+        num_files: int = len(files)
+
+        log.debug('Processing {} files'.format(num_files))
+
+        with make_progressbar(args.progress, num_files) as pbar:
+            pbar.update(0)
+            with open(log_file, 'a', LINE_BUFFERED) as progress_log:
+                if args.processes > 1:
+                    run_pool(job, args.processes, files, pbar, progress_log)
+                else:
+                    run_map(job, files, pbar, progress_log)
 
 
 def process_config(config_file: str, args: Namespace) -> Namespace:
@@ -896,6 +938,7 @@ def get_args(parser: ArgumentParser) -> None:
     Set how to process command line arguments
     """
     parser.add_argument('files', nargs='*', help='Video files to find motion in')
+    parser.add_argument('--cameras', nargs='*', type=int, help='0-indexed number of camera to stream from')
 
     parser.add_argument('--input-dir', '-i', help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
