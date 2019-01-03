@@ -11,9 +11,6 @@ Caches images for a few frames before and after it detects movement
 """
 
 """
-# TODO: logging in the workers - they should pass messages to the master on completion
-    - override log and write output to master in a list
-
 # TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
 
 # TODO: have args as provided by argparse take priority over those in the config (currently it is vv)
@@ -208,13 +205,17 @@ class VideoMotion(object):
                  box_size: int=100, min_box_scale: int=50, cache_time: float=2.0, min_time: float=0.5,
                  threshold: int=7, avg: float=0.1, blur_scale: int=20,
                  mask_areas: list=None, show: bool=False,
-                 codec: str='MJPG', log_level: int=logging.INFO, mem: bool=False) -> None:
+                 codec: str='MJPG', log_level: int=logging.INFO,
+                 mem: bool=False) -> None:
         self.filename = filename
 
         if self.filename is None:
             raise Exception('Filename required')
 
-        log.debug("Reading from {}".format(self.filename))
+        self.log = logging.getLogger('find_motion.VideoMotion')
+        self.log.setLevel(log_level)
+
+        self.log.debug("Reading from {}".format(self.filename))
 
         self.outfile: cv2.VideoWriter = None    # type: ignore
         self.outfiles: int = 0
@@ -234,13 +235,13 @@ class VideoMotion(object):
         self.mask_areas: typing.List[typing.Any] = mask_areas if mask_areas is not None else []
         self.show: bool = show
 
-        log.debug('Caching {} frames, min motion {} frames'.format(self.cache_frames, self.min_movement_frames))
+        self.log.debug('Caching {} frames, min motion {} frames'.format(self.cache_frames, self.min_movement_frames))
 
         self.codec: str = codec
         self.debug: bool = log_level is logging.DEBUG
         self.mem: bool = mem
 
-        log.debug(self.codec)
+        self.log.debug(self.codec)
 
         # initialised in _load_video
         self.amount_of_frames: int = -1
@@ -254,8 +255,7 @@ class VideoMotion(object):
 
         self.wrote_frames: bool = False
         self.err_msg: str = ''
-        self.log = None     # XXX - make logger that returns output on return for logging by calling process, if that's how we're called
-
+        
         self._calc_min_area()
         self._make_gaussian()
         self._load_video()
@@ -317,7 +317,7 @@ class VideoMotion(object):
                                              os.path.basename(outname)) + '_motion.avi'
 
         if self.debug:
-            log.debug("Writing to {}".format(self.outfile_name))
+            self.log.debug("Writing to {}".format(self.outfile_name))
 
         self.outfile = cv2.VideoWriter(self.outfile_name,
                                        cv2.VideoWriter_fourcc(*self.codec),
@@ -398,10 +398,10 @@ class VideoMotion(object):
         """
         Decide if we are going to put out this frame
         """
-        log.debug('Deciding output')
+        self.log.debug('Deciding output')
 
         if (self.movement_counter >= self.min_movement_frames) or (self.movement_decay > 0):
-            log.debug('There is movement')
+            self.log.debug('There is movement')
             # show cached frames
             if self.movement:
                 self.movement_decay = self.cache_frames
@@ -420,18 +420,18 @@ class VideoMotion(object):
 
             self.output_frame()
         else:
-            log.debug('No movement, putting in cache')
+            self.log.debug('No movement, putting in cache')
             cache_size = len(self.frame_cache)
-            log.debug(str(cache_size))
+            self.log.debug(str(cache_size))
             if cache_size == self.cache_frames:
-                log.debug('Clearing first cache entry')
+                self.log.debug('Clearing first cache entry')
 #                self.frame_cache.popleft()
                 delete_frame = self.frame_cache.popleft()
                 if delete_frame is not None:
                     delete_frame.in_cache = False
                     delete_frame.cleanup()
                     del delete_frame
-            log.debug('Putting frame onto cache')
+            self.log.debug('Putting frame onto cache')
             self.frame_cache.append(self.current_frame)
             self.current_frame.in_cache = True
 
@@ -608,7 +608,7 @@ class VideoMotion(object):
             self.find_movement()
 
             if self.mem:
-                log.info(mem_top())
+                self.log.info(mem_top())
 
             self.decide_output()
 
@@ -624,7 +624,7 @@ class VideoMotion(object):
                 self.err_msg = 'Closing video at user request'
                 break
 
-        log.debug('Cleaning up video')
+        self.log.debug('Cleaning up video')
 
         self.cleanup()
 #        self.frame_cache.clear()
