@@ -11,34 +11,34 @@ Caches images for a few frames before and after it detects movement
 """
 
 """
-TODO: logging in the workers - they should pass messages to the master on completion
+# TODO: logging in the workers - they should pass messages to the master on completion
     - override log and write output to master in a list
 
-TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
+# TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
 
-TODO: have args as provided by argparse take priority over those in the config (currently it is vv)
+# TODO: have args as provided by argparse take priority over those in the config (currently it is vv)
 
-TODO: think about r/g/b channel motion detection, instead of just grayscale, or some kind of colour-change detection instead of just tone change - measure rgb on a linear scale, detect change of 'high' amount
+# TODO: think about r/g/b channel motion detection, instead of just grayscale, or some kind of colour-change detection instead of just tone change - measure rgb on a linear scale, detect change of 'high' amount
 
-TODO: make frame_cache its own class so we can do cleanup etc. more neatly
+# TODO: make frame_cache its own class so we can do cleanup etc. more neatly
 
-TODO: profile memory use without explicit cleanup, see if we can rely on GC to keep memory use in line
+# TODO: profile memory use without explicit cleanup, see if we can rely on GC to keep memory use in line
     explicit cleanup halves memory use, but seems to affect performance (2%?)
 
-TODO: scale box sizes by location in frame - gradient, or custom matrix
+# TODO: scale box sizes by location in frame - gradient, or custom matrix
 
-TODO: look at more OpenCV functions, e.g.
+# TODO: look at more OpenCV functions, e.g.
     https://docs.opencv.org/3.2.0/d7/df6/classcv_1_1BackgroundSubtractor.html
     https://docs.opencv.org/3.2.0/dd/d73/classcv_1_1bioinspired_1_1RetinaFastToneMapping.html
     https://docs.opencv.org/3.2.0/d9/d7a/classcv_1_1xphoto_1_1WhiteBalancer.html
 
-TODO: allow opening from a capture stream instead of a file
+# TODO: allow opening from a capture stream instead of a file
 
-TODO: add other output streams - not just to files, to cloud, sFTP server or email
+# TODO: add other output streams - not just to files, to cloud, sFTP server or email
 
-TODO: process certain times of day first - based on creation time or a time pulled from filename (allowing format string to parse time)
+# TODO: process certain times of day first - based on creation time or a time pulled from filename (allowing format string to parse time)
 
-TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
+# TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
 """
 
 import sys
@@ -88,16 +88,16 @@ RED = (0, 0, 255)
 GREEN = (0, 255, 0)
 
 MASK_SCHEMA = {
-    "type" : "array",
-    "items" : {
-        "type" : "array",
-        "minItems" : 2,
-        "items" : {
-            "type" : "array",
-            "minItems" : 2,
-            "maxItems" : 2,
-            "items" : {
-                "type" : "integer"
+    "type": "array",
+    "items": {
+        "type": "array",
+        "minItems": 2,
+        "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+                "type": "integer"
             }
         }
     }
@@ -216,7 +216,7 @@ class VideoMotion(object):
 
         log.debug("Reading from {}".format(self.filename))
 
-        self.outfile: cv2.VideoWriter = None # type: ignore
+        self.outfile: cv2.VideoWriter = None    # type: ignore
         self.outfiles: int = 0
         self.outfile_name: str = ''
         self.outdir: str = outdir
@@ -254,7 +254,7 @@ class VideoMotion(object):
 
         self.wrote_frames: bool = False
         self.err_msg: str = ''
-        self.log = None # XXX - make logger that returns output on return for logging by calling process, if that's how we're called
+        self.log = None     # XXX - make logger that returns output on return for logging by calling process, if that's how we're called
 
         self._calc_min_area()
         self._make_gaussian()
@@ -269,7 +269,7 @@ class VideoMotion(object):
         """
         Set the minimum motion area based on the box size
         """
-        self.min_area = int(math.pow(self.box_size/self.min_box_scale, 2))
+        self.min_area = int(math.pow(self.box_size / self.min_box_scale, 2))
 
 
     def _load_video(self) -> None:
@@ -282,7 +282,7 @@ class VideoMotion(object):
 
         self._get_video_info()
         self.scale = self.box_size / self.frame_width
-        self.max_area = int((self.frame_width * self.frame_height)/2 * self.scale)
+        self.max_area = int((self.frame_width * self.frame_height) / 2 * self.scale)
 
 
     def _get_video_info(self) -> None:
@@ -308,7 +308,7 @@ class VideoMotion(object):
         if self.outfiles > 1 and self.outfile is not None:
             self.outfile.release()
 
-        outname = self.filename + '_' + self.outfiles
+        outname = self.filename + '_' + str(self.outfiles)
 
         if self.outdir == '':
             self.outfile_name = outname + '_motion.avi'
@@ -328,7 +328,7 @@ class VideoMotion(object):
         """
         Make a gaussian for the blur using the box size as a guide
         """
-        gaussian_size = int(self.box_size/self.gaussian_scale)
+        gaussian_size = int(self.box_size / self.gaussian_scale)
         gaussian_size = gaussian_size + 1 if gaussian_size % 2 == 0 else gaussian_size
         self.gaussian = (gaussian_size, gaussian_size)
 
@@ -364,7 +364,7 @@ class VideoMotion(object):
         Initialise the output file if necessary
         """
         frame = self.current_frame if frame is None else frame
-        
+
         if self.show:
             cv2.imshow('frame', frame.frame)
 
@@ -407,7 +407,7 @@ class VideoMotion(object):
                 self.movement_decay = self.cache_frames
 
                 for frame in self.frame_cache:
-                   if frame is not None:
+                    if frame is not None:
                         self.output_raw_frame(frame.raw)
                         frame.in_cache = False
                         frame.cleanup()
@@ -554,7 +554,7 @@ class VideoMotion(object):
 
     def draw_box(self, area, frame: VideoFrame=None) -> None:
         frame = self.current_frame if frame is None else frame
-        cv2.rectangle(frame.frame, *self.scale_area(area, 1/self.scale), GREEN, 2.0)
+        cv2.rectangle(frame.frame, *self.scale_area(area, 1 / self.scale), GREEN, 2)
 
 
     @staticmethod
@@ -562,7 +562,7 @@ class VideoMotion(object):
         """
         Say if we pressed the key we asked for
         """
-        return cv2.waitKey(1) & 0xFF == ord(key) # type: ignore
+        return cv2.waitKey(1) & 0xFF == ord(key)
 
 
     def cleanup(self) -> None:
@@ -640,7 +640,7 @@ def find_files(directory: str) -> OrderedSet:
     return OrderedSet([f[0] for f in sorted([(f, os.path.getmtime(f)) for f in files], key=lambda f: f[1])])
 
 
-def run_vid(filename : str, **kwargs) -> tuple:
+def run_vid(filename: str, **kwargs) -> tuple:
     """
     Video creation and runner function to pass to multiprocessing pool
     """
@@ -649,6 +649,7 @@ def run_vid(filename : str, **kwargs) -> tuple:
         err, err_msg = vid.find_motion()
     except Exception as e:
         err_msg = 'Error processing video {}: {}'.format(filename, e)
+        raise e
         err = None
     return (err, filename, err_msg)
 
@@ -682,7 +683,7 @@ def get_progress(log_file: str) -> set:
         return set()
 
 
-def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=None, pbar:typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None):
+def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None):
     """
     Create and run a pool of workers
     """
@@ -726,7 +727,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
 def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_log: typing.TextIO):
     if not files:
         raise ValueError('More than 0 files needed')
-    
+
     files_processed: typing.Iterable[str] = map(job, files)
     done: int = 0
 
@@ -778,7 +779,7 @@ def make_progressbar(progress: bool=False, num_files: int=0) -> progressbar.Prog
                                    redirect_stdout=True,
                                    redirect_stderr=True,
                                    widgets=make_pbar_widgets(num_files)
-                                  ) if progress else DummyProgressBar()
+                                   ) if progress else DummyProgressBar()
 
 
 def read_masks(masks_file: str) -> list:
@@ -820,7 +821,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
     if not args.files and not args.input_dir:
         # no input: help message, exit
         print_help()
-        sys.exit(2)    
+        sys.exit(2)
 
     masks: list = args.masks if args.masks else []
 
@@ -832,7 +833,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
     log_file: str = set_log_file(args.input_dir, args.output_dir)
 
     files: OrderedSet = OrderedSet(args.files)
-    files.update(find_files(args.input_dir))    
+    files.update(find_files(args.input_dir))
 
     if not args.ignore_progress:
         done_files = get_progress(log_file)
