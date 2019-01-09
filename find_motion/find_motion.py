@@ -383,7 +383,7 @@ class VideoMotion(object):
             self.outfile.write(frame.raw)
 
 
-    def output_raw_frame(self, frame: VideoFrame=None) -> None:
+    def output_raw_frame(self, frame: np_ndarray=None) -> None:
         """
         Output a raw frame, not a VideoFrame
         """
@@ -413,8 +413,8 @@ class VideoMotion(object):
                 for frame in self.frame_cache:
                     if frame is not None:
                         self.output_raw_frame(frame.raw)
-                        frame.in_cache = False
                         if self.cleanup_flag:
+                            frame.in_cache = False
                             frame.cleanup()
                             del frame
 
@@ -437,7 +437,6 @@ class VideoMotion(object):
                         delete_frame.in_cache = False
                         delete_frame.cleanup()
                         del delete_frame
-            self.log.debug('Putting frame onto cache')
             self.frame_cache.append(self.current_frame)
             self.current_frame.in_cache = True
 
@@ -916,7 +915,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
                     else:
                         run_map(job, files, pbar, progress_log)
     except ValueError as e:
-        log.error(e)
+        log.error(str(e))
         sys.exit(1)
 
 
@@ -925,7 +924,7 @@ def process_times(time_order: typing.List[str]):
     for time_slot in time_order:
         match = TIMES_RE.match(time_slot)
         if match:
-            time_range = match.group(1,2)
+            time_range = match.group(1, 2)
             times.append(time_range)
     return times
 
