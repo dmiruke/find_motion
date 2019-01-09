@@ -19,17 +19,12 @@ Caches images for a few frames before and after it detects movement
 
 # TODO: make frame_cache its own class so we can do cleanup etc. more neatly
 
-# TODO: profile memory use without explicit cleanup, see if we can rely on GC to keep memory use in line
-    explicit cleanup halves memory use, but seems to affect performance (2%?)
-
 # TODO: scale box sizes by location in frame - gradient, or custom matrix
 
 # TODO: look at more OpenCV functions, e.g.
     https://docs.opencv.org/3.2.0/d7/df6/classcv_1_1BackgroundSubtractor.html
     https://docs.opencv.org/3.2.0/dd/d73/classcv_1_1bioinspired_1_1RetinaFastToneMapping.html
     https://docs.opencv.org/3.2.0/d9/d7a/classcv_1_1xphoto_1_1WhiteBalancer.html
-
-# TODO: allow opening from a capture stream instead of a file
 
 # TODO: add other output streams - not just to files, to cloud, sFTP server or email
 
@@ -50,6 +45,7 @@ from configparser import ConfigParser
 from ast import literal_eval
 import json
 from jsonschema import validate
+import re
 
 import typing
 
@@ -99,6 +95,12 @@ MASK_SCHEMA = {
         }
     }
 }
+
+# TODO: lookup a time parsing module instead
+HOURS_RE = r'(?:[01][0-9]|2[0-3])'
+MINS_RE = r'(?:[0-5][0-9])'
+TIME_RE = HOURS_RE + ':' + MINS_RE
+TIMES_RE = re.compile(r'^(' + TIME_RE + r')-(' + TIME_RE + r')$')
 
 
 def init_worker():
@@ -206,7 +208,7 @@ class VideoMotion(object):
                  threshold: int=7, avg: float=0.1, blur_scale: int=20,
                  mask_areas: list=None, show: bool=False,
                  codec: str='MJPG', log_level: int=logging.INFO,
-                 mem: bool=False) -> None:
+                 mem: bool=False, cleanup: bool=False) -> None:
         self.filename = filename
 
         if self.filename is None:
@@ -240,6 +242,7 @@ class VideoMotion(object):
         self.codec: str = codec
         self.debug: bool = log_level is logging.DEBUG
         self.mem: bool = mem
+        self.cleanup_flag: bool = cleanup
 
         self.log.debug(self.codec)
 
@@ -247,7 +250,7 @@ class VideoMotion(object):
         self.amount_of_frames: int = -1
         self.frame_width: int = -1
         self.frame_height: int = -1
-        self.scale: float = -1
+        self.scale: float = -1.0
 
         self.current_frame: VideoFrame
         self.ref_frame: VideoFrame
@@ -256,13 +259,14 @@ class VideoMotion(object):
         self.wrote_frames: bool = False
         self.err_msg: str = ''
 
-        self._calc_min_area()
-        self._make_gaussian()
-        self._load_video()
-
         self.movement: bool = False
         self.movement_decay: int = 0
         self.movement_counter: int = 0
+
+        # Initialisation functions
+        self._calc_min_area()
+        self._make_gaussian()
+        self._load_video()
 
 
     def _calc_min_area(self) -> None:
@@ -410,8 +414,9 @@ class VideoMotion(object):
                     if frame is not None:
                         self.output_raw_frame(frame.raw)
                         frame.in_cache = False
-                        frame.cleanup()
-                        del frame
+                        if self.cleanup_flag:
+                            frame.cleanup()
+                            del frame
 
                 self.frame_cache.clear()
             # draw the text
@@ -421,16 +426,17 @@ class VideoMotion(object):
             self.output_frame()
         else:
             self.log.debug('No movement, putting in cache')
-            cache_size = len(self.frame_cache)
-            self.log.debug(str(cache_size))
-            if cache_size == self.cache_frames:
-                self.log.debug('Clearing first cache entry')
-#                self.frame_cache.popleft()
-                delete_frame = self.frame_cache.popleft()
-                if delete_frame is not None:
-                    delete_frame.in_cache = False
-                    delete_frame.cleanup()
-                    del delete_frame
+            if self.cleanup_flag:
+                cache_size = len(self.frame_cache)
+                self.log.debug(str(cache_size))
+                if cache_size == self.cache_frames:
+                    self.log.debug('Clearing first cache entry')
+    #                self.frame_cache.popleft()
+                    delete_frame = self.frame_cache.popleft()
+                    if delete_frame is not None:
+                        delete_frame.in_cache = False
+                        delete_frame.cleanup()
+                        del delete_frame
             self.log.debug('Putting frame onto cache')
             self.frame_cache.append(self.current_frame)
             self.current_frame.in_cache = True
@@ -575,19 +581,20 @@ class VideoMotion(object):
         if self.outfile is not None:
             self.outfile.release()
 
-        self.current_frame.in_cache = False
-        self.current_frame.cleanup()
-        del self.current_frame
+        if self.cleanup_flag:
+            self.current_frame.in_cache = False
+            self.current_frame.cleanup()
+            del self.current_frame
 
-        del self.ref_frame
+            del self.ref_frame
 
-        for frame in self.frame_cache:
-            if frame is not None:
-                frame.in_cache = False
-                frame.cleanup()
-                del frame
-        self.frame_cache.clear()
-        del self.frame_cache
+            for frame in self.frame_cache:
+                if frame is not None:
+                    frame.in_cache = False
+                    frame.cleanup()
+                    del frame
+            self.frame_cache.clear()
+            del self.frame_cache
 
         return
 
@@ -872,37 +879,55 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
                   outdir=args.output_dir, mask_areas=masks,
                   show=args.show, codec=args.codec,
                   log_level=logging.DEBUG if args.debug else logging.INFO,
-                  mem=args.mem,
+                  mem=args.mem, cleanup=args.cleanup,
                   blur_scale=args.blur_scale, min_box_scale=args.min_box_scale,
                   threshold=args.threshold, avg=args.avg,
                   fps=args.fps, min_time=args.mintime, cache_time=args.cachetime)
 
-    # processing camera streams
-    if args.cameras:
-        with open(log_file, 'a', LINE_BUFFERED) as progress_log:
-            run_stream(job, args.processes, args.cameras, progress_log)
-    else:
-        # processing input files
-        files: OrderedSet = OrderedSet(args.files)
-        files.update(find_files(args.input_dir))
-
-        if not args.ignore_progress:
-            done_files = get_progress(log_file)
-            files.difference_update(done_files)
-        else:
-            log.debug('Ignoring previous progress, processing all found files')
-
-        num_files: int = len(files)
-
-        log.debug('Processing {} files'.format(num_files))
-
-        with make_progressbar(args.progress, num_files) as pbar:
-            pbar.update(0)
+    try:
+        if args.cameras:
+            # processing camera streams
             with open(log_file, 'a', LINE_BUFFERED) as progress_log:
-                if args.processes > 1:
-                    run_pool(job, args.processes, files, pbar, progress_log)
-                else:
-                    run_map(job, files, pbar, progress_log)
+                run_stream(job, args.processes, args.cameras, progress_log)
+        else:
+            # processing input files
+            files: OrderedSet = OrderedSet(args.files)
+            files.update(find_files(args.input_dir))
+
+            if not args.ignore_progress:
+                done_files = get_progress(log_file)
+                files.difference_update(done_files)
+            else:
+                log.debug('Ignoring previous progress, processing all found files')
+
+            # sort out time ordering priority
+            time_order = process_times(args.time_order)
+            log.debug(time_order)
+
+            num_files: int = len(files)
+
+            log.debug('Processing {} files'.format(num_files))
+
+            with make_progressbar(args.progress, num_files) as pbar:
+                pbar.update(0)
+                with open(log_file, 'a', LINE_BUFFERED) as progress_log:
+                    if args.processes > 1:
+                        run_pool(job, args.processes, files, pbar, progress_log)
+                    else:
+                        run_map(job, files, pbar, progress_log)
+    except ValueError as e:
+        log.error(e)
+        sys.exit(1)
+
+
+def process_times(time_order: typing.List[str]):
+    times = []
+    for time_slot in time_order:
+        match = TIMES_RE.match(time_slot)
+        if match:
+            time_range = match.group(1,2)
+            times.append(time_range)
+    return times
 
 
 def process_config(config_file: str, args: Namespace) -> Namespace:
@@ -926,8 +951,9 @@ def process_config(config_file: str, args: Namespace) -> Namespace:
                 use_value = False
             else:
                 raise ValueError('{} must be True or False'.format(setting))
-        if setting == 'masks':
+        if setting in ('masks', 'cameras', 'time_order'):
             use_value = literal_eval(value)
+            # TODO: validate that this is a list of tuples of int (masks) or a list of ints (cameras) or a list of strings (time_order)
         args.__setattr__(setting, use_value)
     log.debug(str(vars(args)))
     return args
@@ -938,15 +964,19 @@ def get_args(parser: ArgumentParser) -> None:
     Set how to process command line arguments
     """
     parser.add_argument('files', nargs='*', help='Video files to find motion in')
-    parser.add_argument('--cameras', nargs='*', type=int, help='0-indexed number of camera to stream from')
 
+    parser.add_argument('--config', '-c', help='Config in INI format')
+
+    parser.add_argument('--cameras', nargs='*', type=int, help='0-indexed number of camera to stream from')
     parser.add_argument('--input-dir', '-i', help='Input directory to process')
     parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
     parser.add_argument('--ignore-progress', '-I', action='store_true', default=False, help='Ignore progress log')
 
-    parser.add_argument('--config', '-c', help='Config in INI format')
-
     parser.add_argument('--codec', '-k', default='MP42', help='Codec to write files with')
+    parser.add_argument('--fps', '-f', type=int, default=30, help='Frames per second of input files')
+
+    parser.add_argument('--time_order', '-to', nargs='*', help='Time ranges in priority order for processing. Express as "HH:MM-HH:MM"')
+
     parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video')
     parser.add_argument('--masks_file', help='File holding mask coordinates (JSON)')
 
@@ -956,13 +986,13 @@ def get_args(parser: ArgumentParser) -> None:
     parser.add_argument('--mintime', '-M', type=float, default=0.5, help='Minimum time for motion, in seconds')
     parser.add_argument('--cachetime', '-C', type=float, default=1.0, help='How long to cache, in seconds')
     parser.add_argument('--avg', '-a', type=float, default=0.1, help='How much to weight the most recent frame in the running average')
-    parser.add_argument('--fps', '-f', type=int, default=30, help='Frames per second of input files')
 
     parser.add_argument('--processes', '-J', default=1, type=int, help='Number of processors to use')
 
     parser.add_argument('--progress', '-p', action='store_true', help='Show progress bar')
     parser.add_argument('--show', '-s', action='store_true', default=False, help='Show video processing')
 
+    parser.add_argument('--cleanup', '-cu', action='store_true', help='Cleanup used frames (do not wait for garbage collection)')
     parser.add_argument('--mem', '-u', action='store_true', help='Run memory usage')
     parser.add_argument('--debug', '-d', action='store_true', help='Debug')
 
