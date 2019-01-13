@@ -637,16 +637,16 @@ def find_files(directory: str) -> typing.List[str]:
     Finds files in the directory, recursively, sorts them by last modified time
     """
     return [os.path.join(dirpath, f) for dirpath, dnames, fnames in os.walk(directory) for f in fnames] if directory is not None else []
-    
 
-def verify_files(file_list: typing.List[str]):
+
+def verify_files(file_list: typing.List[str]) -> typing.List[str]:
     """
     Locates files with given file names, returns in a list of tuples with their last modified time
     """
     return [f for f in file_list if os.path.is_file(f)]
 
 
-def sort_files_by_time(file_list: typing.List[typing.Tuple], priority_intervals: typing.List[typing.Tuple]):
+def sort_files_by_time(file_list: typing.List[str], priority_intervals: typing.List[typing.Tuple]):
     """
     Sort files by modified time.
 
@@ -661,7 +661,7 @@ def sort_files_by_time(file_list: typing.List[typing.Tuple], priority_intervals:
     sorted_files: typing.List[typing.Tuple] = [f for f in sorted([(f, os.path.getmtime(f)) for f in file_list], key=lambda f: f[1])]
 
     file_set: OrderedSet = OrderedSet()
-    
+
     for time_interval in priority_intervals:
         for vid_file in sorted_files:
             if in_interval(vid_file, time_interval):
@@ -937,34 +937,29 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
             # sort them
             files: OrderedSet = sort_files_by_time(in_files, time_order)
 
-            log.debug(files)
-
-            sys.exit()
+            log.debug(str(files))
 
             if not args.ignore_progress:
                 done_files = get_progress(log_file)
-                log.debug(done_files)
+                log.debug(str(done_files))
                 files = OrderedSet({f for f in files if f[0] not in done_files})
-                log.debug(files)
+                log.debug(str(files))
             else:
                 log.debug('Ignoring previous progress, processing all found files')
-
-            sys.exit()
-
-
-            # TODO: do something with this
 
             num_files: int = len(files)
 
             log.debug('Processing {} files'.format(num_files))
 
+            do_files: typing.List[str] = [f[0] for f in files]
+
             with make_progressbar(args.progress, num_files) as pbar:
                 pbar.update(0)
                 with open(log_file, 'a', LINE_BUFFERED) as progress_log:
                     if args.processes > 1:
-                        run_pool(job, args.processes, files, pbar, progress_log)
+                        run_pool(job, args.processes, do_files, pbar, progress_log)
                     else:
-                        run_map(job, files, pbar, progress_log)
+                        run_map(job, do_files, pbar, progress_log)
     except ValueError as e:
         log.error(str(e))
         sys.exit(1)
