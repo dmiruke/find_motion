@@ -45,7 +45,7 @@ from configparser import ConfigParser
 from ast import literal_eval
 import json
 from jsonschema import validate
-import re
+from time import strptime
 
 import typing
 
@@ -95,12 +95,6 @@ MASK_SCHEMA = {
         }
     }
 }
-
-# TODO: lookup a time parsing module instead
-HOURS_RE = r'(?:[01][0-9]|2[0-3])'
-MINS_RE = r'(?:[0-5][0-9])'
-TIME_RE = HOURS_RE + ':' + MINS_RE
-TIMES_RE = re.compile(r'^(' + TIME_RE + r')-(' + TIME_RE + r')$')
 
 
 def init_worker():
@@ -638,12 +632,53 @@ class VideoMotion(object):
         return self.wrote_frames, self.err_msg
 
 
-def find_files(directory: str) -> OrderedSet:
+def find_files(directory: str) -> typing.List[str]:
     """
     Finds files in the directory, recursively, sorts them by last modified time
     """
-    files = [os.path.join(dirpath, f) for dirpath, dnames, fnames in os.walk(directory) for f in fnames] if directory is not None else []
-    return OrderedSet([f[0] for f in sorted([(f, os.path.getmtime(f)) for f in files], key=lambda f: f[1])])
+    return [os.path.join(dirpath, f) for dirpath, dnames, fnames in os.walk(directory) for f in fnames] if directory is not None else []
+    
+
+def verify_files(file_list: typing.List[str]):
+    """
+    Locates files with given file names, returns in a list of tuples with their last modified time
+    """
+    return [f for f in file_list if os.path.is_file(f)]
+
+
+def sort_files_by_time(file_list: typing.List[typing.Tuple], priority_intervals: typing.List[typing.Tuple]):
+    """
+    Sort files by modified time.
+
+    Take into account if a file falls in one of the priority periods, do it first.
+
+    Method: find files in the intervals, starting with the highest priority one first.
+
+    Go through the files, putting any matches at the start of the OrderedSet.
+
+    Repeat until we get to the end of the intervals, then put any remaining files onto the set in order.
+    """
+    sorted_files: typing.List[typing.Tuple] = [f for f in sorted([(f, os.path.getmtime(f)) for f in file_list], key=lambda f: f[1])]
+
+    file_set: OrderedSet = OrderedSet()
+    
+    for time_interval in priority_intervals:
+        for vid_file in sorted_files:
+            if in_interval(vid_file, time_interval):
+                file_set.add(vid_file)
+
+    for vid_file in sorted_files:
+        if vid_file not in file_set:
+            file_set.add(vid_file)
+
+    return file_set
+
+
+def in_interval(vid_file, time_interval):
+    """
+    TODO: check if the mtime (epoch) of the file is in the time interval given
+    """
+    pass
 
 
 def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
@@ -890,18 +925,34 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
                 run_stream(job, args.processes, args.cameras, progress_log)
         else:
             # processing input files
-            files: OrderedSet = OrderedSet(args.files)
-            files.update(find_files(args.input_dir))
-
-            if not args.ignore_progress:
-                done_files = get_progress(log_file)
-                files.difference_update(done_files)
-            else:
-                log.debug('Ignoring previous progress, processing all found files')
 
             # sort out time ordering priority
             time_order = process_times(args.time_order)
             log.debug(time_order)
+
+            # find files on disk
+            in_files: typing.List[str] = verify_files(args.files)
+            in_files.extend(find_files(args.input_dir))
+
+            # sort them
+            files: OrderedSet = sort_files_by_time(in_files, time_order)
+
+            log.debug(files)
+
+            sys.exit()
+
+            if not args.ignore_progress:
+                done_files = get_progress(log_file)
+                log.debug(done_files)
+                files = OrderedSet({f for f in files if f[0] not in done_files})
+                log.debug(files)
+            else:
+                log.debug('Ignoring previous progress, processing all found files')
+
+            sys.exit()
+
+
+            # TODO: do something with this
 
             num_files: int = len(files)
 
@@ -922,10 +973,12 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
 def process_times(time_order: typing.List[str]):
     times = []
     for time_slot in time_order:
-        match = TIMES_RE.match(time_slot)
-        if match:
-            time_range = match.group(1, 2)
-            times.append(time_range)
+        try:
+            interval = list(map(lambda t: strptime(t, '%H:%M'), time_slot.split('-')))
+        except ValueError as e:
+            log.error('Time interval {} misparsed: {}'.format(time_slot, e))
+            continue
+        times.append(interval)
     return times
 
 
