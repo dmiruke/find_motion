@@ -643,10 +643,10 @@ def verify_files(file_list: typing.List[str]) -> typing.List[str]:
     """
     Locates files with given file names, returns in a list of tuples with their last modified time
     """
-    return [f for f in file_list if os.path.is_file(f)]
+    return [f for f in file_list if os.path.isfile(f)]
 
 
-def sort_files_by_time(file_list: typing.List[str], priority_intervals: typing.List[typing.Tuple]):
+def sort_files_by_time(file_list: typing.List[str], priority_intervals: typing.List[typing.Tuple[time.struct_time, time.struct_time]]) -> OrderedSet:
     """
     Sort files by modified time.
 
@@ -658,13 +658,13 @@ def sort_files_by_time(file_list: typing.List[str], priority_intervals: typing.L
 
     Repeat until we get to the end of the intervals, then put any remaining files onto the set in order.
     """
-    sorted_files: typing.List[typing.Tuple] = [f for f in sorted([(f, os.path.getmtime(f)) for f in file_list], key=lambda f: f[1])]
+    sorted_files: typing.List[typing.Tuple[str, time.struct_time]] = [(f[0], time.gmtime(f[1])) for f in sorted([(f, os.path.getmtime(f)) for f in file_list], key=lambda f: f[1])]
 
     file_set: OrderedSet = OrderedSet()
 
     for time_interval in priority_intervals:
         for vid_file in sorted_files:
-            if in_interval(vid_file, time_interval):
+            if in_interval(vid_file, time_interval) and vid_file not in file_set:
                 file_set.add(vid_file)
 
     for vid_file in sorted_files:
@@ -674,11 +674,49 @@ def sort_files_by_time(file_list: typing.List[str], priority_intervals: typing.L
     return file_set
 
 
-def in_interval(vid_file, time_interval):
+def in_interval(vid_file: typing.Tuple[str, time.struct_time], time_interval: typing.Tuple[time.struct_time, time.struct_time]) -> bool:
     """
-    TODO: check if the mtime (epoch) of the file is in the time interval given
+    Check if the mtime (epoch) of the file is in the time interval given
     """
-    pass
+    file_time = clock_time(vid_file[1])
+    interval = (clock_time(time_interval[0]), clock_time(time_interval[1]))
+    return interval[0] <= file_time and file_time < interval[1]
+
+
+class clock_time(object):
+    def __init__(self, struct_time: time.struct_time) -> None:
+        self.hour = struct_time.tm_hour
+        self.min = struct_time.tm_min
+        self.sec = struct_time.tm_sec
+
+    def __str__(self) -> str:
+        return "{:02d}:{:02d}:{:02d}".format(self.hour, self.min, self.sec)
+
+    def __lt__(self, other) -> bool:
+        return self.hour < other.hour \
+            or self.hour == other.hour and self.min < other.min \
+            or self.hour == other.hour and self.min == other.min and self.sec < other.sec
+
+    def __le__(self, other) -> bool:
+        return self.__eq__(other) or \
+            self.__lt__(other)
+
+    def __eq__(self, other) -> bool:
+        return self.hour == other.hour and \
+            self.min == other.min and \
+            self.sec == other.sec
+
+    def __ne__(self, other) -> bool:
+        return not self.__eq__(other)
+
+    def __gt__(self, other) -> bool:
+        return self.hour > other.hour \
+            or self.hour == other.hour and self.min > other.min \
+            or self.hour == other.hour and self.min == other.min and self.sec > other.sec
+
+    def __ge__(self, other) -> bool:
+        return self.__eq__(other) or \
+            self.__gt__(other)
 
 
 def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
