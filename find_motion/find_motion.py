@@ -938,6 +938,10 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
         print_help()
         sys.exit(2)
 
+    if args.output_dir and not os.path.isdir(args.output_dir):
+        os.mkdir(args.output_dir)
+        log.warning('Created output directory {}'.format(args.output_dir))
+
     masks: list = args.masks if args.masks else []
 
     if args.masks_file:
@@ -959,7 +963,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
     try:
         if args.cameras:
             # processing camera streams
-            with open(log_file, 'a', LINE_BUFFERED) as progress_log:
+            with open(log_file, 'a+', LINE_BUFFERED) as progress_log:
                 run_stream(job, args.processes, args.cameras, progress_log)
         else:
             # processing input files
@@ -993,7 +997,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
 
             with make_progressbar(args.progress, num_files) as pbar:
                 pbar.update(0)
-                with open(log_file, 'a', LINE_BUFFERED) as progress_log:
+                with open(log_file, 'a+', LINE_BUFFERED) as progress_log:
                     if args.processes > 1:
                         run_pool(job, args.processes, do_files, pbar, progress_log)
                     else:
