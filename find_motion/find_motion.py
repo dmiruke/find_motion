@@ -28,8 +28,6 @@ Caches images for a few frames before and after it detects movement
 
 # TODO: add other output streams - not just to files, to cloud, sFTP server or email
 
-# TODO: process certain times of day first - based on creation time or a time pulled from filename (allowing format string to parse time)
-
 # TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
 """
 
@@ -38,6 +36,7 @@ import os
 
 import signal
 import time
+from datetime import datetime
 import math
 
 from argparse import ArgumentParser, Namespace
@@ -658,7 +657,7 @@ def sort_files_by_time(file_list: typing.List[str], priority_intervals: typing.L
 
     Repeat until we get to the end of the intervals, then put any remaining files onto the set in order.
     """
-    sorted_files: typing.List[typing.Tuple[str, time.struct_time]] = [(f[0], time.gmtime(f[1])) for f in sorted([(f, os.path.getmtime(f)) for f in file_list], key=lambda f: f[1])]
+    sorted_files: typing.List[typing.Tuple[str, float]] = [f for f in sorted([(f, os.path.getmtime(f)) for f in file_list], key=lambda f: f[1])]
 
     file_set: OrderedSet = OrderedSet()
 
@@ -671,19 +670,23 @@ def sort_files_by_time(file_list: typing.List[str], priority_intervals: typing.L
         if vid_file not in file_set:
             file_set.add(vid_file)
 
+    if log.getEffectiveLevel() == logging.DEBUG:
+        for f in file_set:
+            log.debug(datetime.fromtimestamp(f[1]).strftime("%H:%M:%S"))
+
     return file_set
 
 
-def in_interval(vid_file: typing.Tuple[str, time.struct_time], time_interval: typing.Tuple[time.struct_time, time.struct_time]) -> bool:
+def in_interval(vid_file: typing.Tuple[str, float], time_interval: typing.Tuple[time.struct_time, time.struct_time]) -> bool:
     """
     Check if the mtime (epoch) of the file is in the time interval given
     """
-    file_time = clock_time(vid_file[1])
-    interval = (clock_time(time_interval[0]), clock_time(time_interval[1]))
+    file_time = clockTime(time.gmtime(vid_file[1]))
+    interval = (clockTime(time_interval[0]), clockTime(time_interval[1]))
     return interval[0] <= file_time and file_time < interval[1]
 
 
-class clock_time(object):
+class clockTime(object):
     def __init__(self, struct_time: time.struct_time) -> None:
         self.hour = struct_time.tm_hour
         self.min = struct_time.tm_min
@@ -692,29 +695,29 @@ class clock_time(object):
     def __str__(self) -> str:
         return "{:02d}:{:02d}:{:02d}".format(self.hour, self.min, self.sec)
 
-    def __lt__(self, other) -> bool:
+    def __lt__(self, other: 'clockTime') -> bool:
         return self.hour < other.hour \
             or self.hour == other.hour and self.min < other.min \
             or self.hour == other.hour and self.min == other.min and self.sec < other.sec
 
-    def __le__(self, other) -> bool:
+    def __le__(self, other: 'clockTime') -> bool:
         return self.__eq__(other) or \
             self.__lt__(other)
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: 'clockTime') -> bool:
         return self.hour == other.hour and \
             self.min == other.min and \
             self.sec == other.sec
 
-    def __ne__(self, other) -> bool:
+    def __ne__(self, other: 'clockTime') -> bool:
         return not self.__eq__(other)
 
-    def __gt__(self, other) -> bool:
+    def __gt__(self, other: 'clockTime') -> bool:
         return self.hour > other.hour \
             or self.hour == other.hour and self.min > other.min \
             or self.hour == other.hour and self.min == other.min and self.sec > other.sec
 
-    def __ge__(self, other) -> bool:
+    def __ge__(self, other: 'clockTime') -> bool:
         return self.__eq__(other) or \
             self.__gt__(other)
 
@@ -927,7 +930,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
         log.debug('Processing config: {}'.format(args.config))
         process_config(args.config, args)
 
-    if args.debug:
+    if args.debug or args.test:
         log.setLevel(logging.DEBUG)
 
     if args.progress:
@@ -979,19 +982,26 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
             # sort them
             files: OrderedSet = sort_files_by_time(in_files, time_order)
 
-            log.debug(str(files))
+            found_files_num = len(files)
+
+            log.debug("{} files found".format(str(found_files_num)))
 
             if not args.ignore_progress:
                 done_files = get_progress(log_file)
-                log.debug(str(done_files))
+                log.debug("{} done files".format(str(len(done_files))))
                 files = OrderedSet({f for f in files if f[0] not in done_files})
-                log.debug(str(files))
+                log.debug("{} files removed".format(str(found_files_num - len(files))))
             else:
                 log.debug('Ignoring previous progress, processing all found files')
 
             num_files: int = len(files)
 
             log.debug('Processing {} files'.format(num_files))
+
+            if args.test:
+                for f in files:
+                    log.debug("{}: {}".format(f[0], datetime.fromtimestamp(f[1]).isoformat()))
+                sys.exit(0)
 
             do_files: typing.List[str] = [f[0] for f in files]
 
@@ -1084,7 +1094,7 @@ def get_args(parser: ArgumentParser) -> None:
     parser.add_argument('--cleanup', '-cu', action='store_true', help='Cleanup used frames (do not wait for garbage collection)')
     parser.add_argument('--mem', '-u', action='store_true', help='Run memory usage')
     parser.add_argument('--debug', '-d', action='store_true', help='Debug')
-
+    parser.add_argument('--test', '-T', action='store_true', help='Test which files or camera streams would be processed')
 
 if __name__ == '__main__':
     main()
