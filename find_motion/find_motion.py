@@ -96,7 +96,7 @@ MASK_SCHEMA = {
 }
 
 
-def init_worker():
+def init_worker() -> None:
     """
     Supress signal handling in the worker processes so that they don't capture SIGINT (ctrl-c)
     """
@@ -108,8 +108,17 @@ class VideoInfo(object):
     Class to read in a video, and get metadata out
     """
     def __init__(self, filename: str=None, log_level=logging.INFO) -> None:
-        self.filename = filename
+        self.filename: str = filename
+        self.cap: cv2.VideoCapture = None
+        self.amount_of_frames: int = 0
+        self.frame_width: int = 0
+        self.frame_height: int = 0
+
         self._load_video()
+
+
+    def __str__(self) -> str:
+        return "File: {}; frames: {}; {}x{}px".format(self.filename, self.amount_of_frames, self.frame_width, self.frame_height)
 
 
     def _load_video(self) -> None:
@@ -338,8 +347,6 @@ class VideoMotion(object):
         small = imutils.resize(frame.raw, width=self.box_size)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         frame.blur = cv2.GaussianBlur(gray, self.gaussian, 0)
-#        del small
-#        del gray
 
 
     def read(self) -> bool:
@@ -424,7 +431,6 @@ class VideoMotion(object):
                 self.log.debug(str(cache_size))
                 if cache_size == self.cache_frames:
                     self.log.debug('Clearing first cache entry')
-    #                self.frame_cache.popleft()
                     delete_frame = self.frame_cache.popleft()
                     if delete_frame is not None:
                         delete_frame.in_cache = False
@@ -516,8 +522,6 @@ class VideoMotion(object):
 
                 self.movement_counter += 1
                 self.movement = True
-
-#        del frame.contours
 
         if not self.movement:
             self.movement_counter = 0
@@ -681,43 +685,44 @@ def in_interval(vid_file: typing.Tuple[str, float], time_interval: typing.Tuple[
     """
     Check if the mtime (epoch) of the file is in the time interval given
     """
-    file_time = clockTime(time.gmtime(vid_file[1]))
-    interval = (clockTime(time_interval[0]), clockTime(time_interval[1]))
+    file_time = ClockTime(time.gmtime(vid_file[1]))
+    interval = (ClockTime(time_interval[0]), ClockTime(time_interval[1]))
     return interval[0] <= file_time and file_time < interval[1]
 
 
-class clockTime(object):
+class ClockTime(object):
     def __init__(self, struct_time: time.struct_time) -> None:
-        self.hour = struct_time.tm_hour
-        self.min = struct_time.tm_min
-        self.sec = struct_time.tm_sec
+        self.hour: int = struct_time.tm_hour
+        self.min: int = struct_time.tm_min
+        self.sec: int = struct_time.tm_sec
 
     def __str__(self) -> str:
         return "{:02d}:{:02d}:{:02d}".format(self.hour, self.min, self.sec)
 
-    def __lt__(self, other: 'clockTime') -> bool:
+    # typhints left out on 'other' since 'ClockTime' fails and using 'object' provides little benefit
+    def __lt__(self, other) -> bool:
         return self.hour < other.hour \
             or self.hour == other.hour and self.min < other.min \
             or self.hour == other.hour and self.min == other.min and self.sec < other.sec
 
-    def __le__(self, other: 'clockTime') -> bool:
+    def __le__(self, other) -> bool:
         return self.__eq__(other) or \
             self.__lt__(other)
 
-    def __eq__(self, other: 'clockTime') -> bool:
+    def __eq__(self, other) -> bool:
         return self.hour == other.hour and \
             self.min == other.min and \
             self.sec == other.sec
 
-    def __ne__(self, other: 'clockTime') -> bool:
+    def __ne__(self, other) -> bool:
         return not self.__eq__(other)
 
-    def __gt__(self, other: 'clockTime') -> bool:
+    def __gt__(self, other) -> bool:
         return self.hour > other.hour \
             or self.hour == other.hour and self.min > other.min \
             or self.hour == other.hour and self.min == other.min and self.sec > other.sec
 
-    def __ge__(self, other: 'clockTime') -> bool:
+    def __ge__(self, other) -> bool:
         return self.__eq__(other) or \
             self.__gt__(other)
 
@@ -765,7 +770,7 @@ def get_progress(log_file: str) -> set:
         return set()
 
 
-def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None):
+def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None) -> None:
     """
     Create and run a pool of workers
     """
@@ -806,7 +811,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
     pool.terminate()
 
 
-def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_log: typing.TextIO):
+def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_log: typing.TextIO) -> None:
     if not files:
         raise ValueError('More than 0 files needed')
 
@@ -825,7 +830,7 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_lo
         log.warning('Ending processing at user request')
 
 
-def run_stream(job: typing.Callable, processes: int, cameras: typing.Iterable[int], progress_log: typing.TextIO):
+def run_stream(job: typing.Callable, processes: int, cameras: typing.Iterable[int], progress_log: typing.TextIO) -> None:
     if not cameras:
         raise ValueError('More than 0 cameras needed')
 
@@ -859,6 +864,23 @@ def run_stream(job: typing.Callable, processes: int, cameras: typing.Iterable[in
         log.warning('Ending processing at user request')
 
     pool.terminate()
+
+
+def test_files(files):
+    for f in files:
+        log.debug("{}: {}".format(f[0], datetime.fromtimestamp(f[1]).isoformat()))
+        try:
+            log.debug(str(VideoInfo(f[0], log_level=logging.DEBUG)))
+        except Exception as e:
+            log.error("File {}: {}".format(f[0], e))
+
+
+def test_stream(cameras) -> None:
+    for camera in cameras:
+        try:
+            log.debug("Camera stream: " + str(VideoInfo(camera, log_level=logging.DEBUG)))
+        except Exception as e:
+            log.error("Failed to open camera {}: {}".format(camera, e))
 
 
 def main():
@@ -965,6 +987,9 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
 
     try:
         if args.cameras:
+            if args.test:
+                test_stream(args.cameras)
+                sys.exit(0)
             # processing camera streams
             with open(log_file, 'a+', LINE_BUFFERED) as progress_log:
                 run_stream(job, args.processes, args.cameras, progress_log)
@@ -999,8 +1024,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
             log.debug('Processing {} files'.format(num_files))
 
             if args.test:
-                for f in files:
-                    log.debug("{}: {}".format(f[0], datetime.fromtimestamp(f[1]).isoformat()))
+                test_files(files)
                 sys.exit(0)
 
             do_files: typing.List[str] = [f[0] for f in files]
@@ -1095,6 +1119,7 @@ def get_args(parser: ArgumentParser) -> None:
     parser.add_argument('--mem', '-u', action='store_true', help='Run memory usage')
     parser.add_argument('--debug', '-d', action='store_true', help='Debug')
     parser.add_argument('--test', '-T', action='store_true', help='Test which files or camera streams would be processed')
+
 
 if __name__ == '__main__':
     main()
