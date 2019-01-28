@@ -103,6 +103,14 @@ def init_worker() -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
+class VideoError(Exception):
+    """
+    An error when processing a video
+    """
+    def __init__(self, msg):
+        super()
+
+
 class VideoInfo(object):
     """
     Class to read in a video, and get metadata out
@@ -114,32 +122,41 @@ class VideoInfo(object):
         self.frame_width: int = 0
         self.frame_height: int = 0
 
-        self._load_video()
+        self.log = logging.getLogger('find_motion.VideoInfo')
+        self.log.setLevel(log_level)
+
+        self.loaded = self._load_video()
 
 
     def __str__(self) -> str:
         return "File: {}; frames: {}; {}x{}px".format(self.filename, self.amount_of_frames, self.frame_width, self.frame_height)
 
 
-    def _load_video(self) -> None:
+    def _load_video(self) -> bool:
         """
         Open the input video file, get the video info
         """
         self.cap = cv2.VideoCapture(self.filename)
-        self._get_video_info()
+        try:
+            self._get_video_info()
+        except VideoError as e:
+            self.log.error(str(e))
+            return False
+        return True
 
 
     def _get_video_info(self) -> None:
         """
         Set some metrics from the video
         """
+        self.log.debug(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.amount_of_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         if self.amount_of_frames == 0 or self.frame_width == 0 or self.frame_height == 0:
             broken = 'frames' if self.amount_of_frames == 0 else 'height/width'
-            raise Exception("Video info malformed - {} is 0: {}".format(broken, self.filename))
+            raise VideoError("Video info malformed - {} is 0: {}".format(broken, self.filename))
         return
 
 
@@ -224,7 +241,7 @@ class VideoMotion(object):
         self.outfile: cv2.VideoWriter = None    # type: ignore
         self.outfiles: int = 0
         self.outfile_name: str = ''
-        self.outdir: str = outdir
+        self.outdir: str = os.path.normpath(outdir)
 
         self.fps: int = fps
         self.box_size: int = box_size
@@ -242,7 +259,7 @@ class VideoMotion(object):
         self.log.debug('Caching {} frames, min motion {} frames'.format(self.cache_frames, self.min_movement_frames))
 
         self.codec: str = codec
-        self.debug: bool = log_level is logging.DEBUG
+        self.debug: bool = log_level == logging.DEBUG
         self.mem: bool = mem
         self.cleanup_flag: bool = cleanup
 
@@ -268,7 +285,7 @@ class VideoMotion(object):
         # Initialisation functions
         self._calc_min_area()
         self._make_gaussian()
-        self._load_video()
+        self.loaded = self._load_video()
 
 
     def _calc_min_area(self) -> None:
@@ -278,7 +295,7 @@ class VideoMotion(object):
         self.min_area = int(math.pow(self.box_size / self.min_box_scale, 2))
 
 
-    def _load_video(self) -> None:
+    def _load_video(self) -> bool:
         """
         Open the input video file, set up the ref frame and frame cache, get the video info and set the scale
         """
@@ -286,22 +303,31 @@ class VideoMotion(object):
         self.ref_frame = None
         self.frame_cache = deque(maxlen=self.cache_frames)
 
-        self._get_video_info()
+        try:
+            self._get_video_info()
+        except VideoError as e:
+            self.log.error(str(e))
+            return False
         self.scale = self.box_size / self.frame_width
         self.max_area = int((self.frame_width * self.frame_height) / 2 * self.scale)
+        return True
 
 
     def _get_video_info(self) -> None:
         """
         Set some metrics from the video
         """
+        self.log.debug(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
         self.amount_of_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        if self.amount_of_frames == 0 or self.frame_width == 0 or self.frame_height == 0:
-            broken = 'frames' if self.amount_of_frames == 0 else 'height/width'
-            raise Exception("Video info malformed - {} is 0: {}".format(broken, self.filename))
+        if self.frame_width == 0 or self.frame_height == 0:
+            broken = 'width' if self.frame_width == 0 else 'height'
+            raise VideoError("Video info malformed - {} is 0: {}".format(broken, self.filename))
+        if self.amount_of_frames == 0:
+            log.warning('Video info malformed - frames reported as 0')
         return
 
 
@@ -639,14 +665,14 @@ def find_files(directory: str) -> typing.List[str]:
     """
     Finds files in the directory, recursively, sorts them by last modified time
     """
-    return [os.path.join(dirpath, f) for dirpath, dnames, fnames in os.walk(directory) for f in fnames] if directory is not None else []
+    return [os.path.normpath(os.path.abspath(os.path.join(dirpath, f))) for dirpath, dnames, fnames in os.walk(directory) for f in fnames if f != 'progress.log'] if directory is not None else []
 
 
 def verify_files(file_list: typing.List[str]) -> typing.List[str]:
     """
     Locates files with given file names, returns in a list of tuples with their last modified time
     """
-    return [f for f in file_list if os.path.isfile(f)]
+    return [os.path.normpath(os.path.abspath(f)) for f in file_list if os.path.isfile(f)]
 
 
 def sort_files_by_time(file_list: typing.List[str], priority_intervals: typing.List[typing.Tuple[time.struct_time, time.struct_time]]) -> OrderedSet:
@@ -733,10 +759,13 @@ def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
     """
     try:
         vid = VideoMotion(filename=filename, **kwargs)
-        err, err_msg = vid.find_motion()
+        if vid.loaded:
+            err, err_msg = vid.find_motion()
+        else:
+            err = None
+            err_msg = 'Video did not load successfully'
     except Exception as e:
         err_msg = 'Error processing video {}: {}'.format(filename, e)
-        raise e
         err = None
     return (err, filename, err_msg)
 
@@ -941,7 +970,7 @@ def read_masks(masks_file: str) -> list:
 
 
 def set_log_file(input_dir: str=None, output_dir: str=None) -> str:
-    return os.path.join(output_dir if output_dir is not None else input_dir if input_dir is not None else '.', 'progress.log')
+    return os.path.normpath(os.path.join(output_dir if output_dir is not None else input_dir if input_dir is not None else '.', 'progress.log'))
 
 
 def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
@@ -1012,16 +1041,14 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
             log.debug("{} files found".format(str(found_files_num)))
 
             if not args.ignore_progress:
-                done_files = get_progress(log_file)
-                log.debug("{} done files".format(str(len(done_files))))
-                files = OrderedSet({f for f in files if f[0] not in done_files})
-                log.debug("{} files removed".format(str(found_files_num - len(files))))
+                files = process_progress(files, log_file, args.ignore_drive)
             else:
                 log.debug('Ignoring previous progress, processing all found files')
 
             num_files: int = len(files)
 
             log.debug('Processing {} files'.format(num_files))
+            log.debug(str(files))
 
             if args.test:
                 test_files(files)
@@ -1039,6 +1066,18 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
     except ValueError as e:
         log.error(str(e))
         sys.exit(1)
+
+
+def process_progress(files: OrderedSet, log_file: str, ignore_drive: bool=False):
+    found_files_num = len(files)
+    done_files = get_progress(log_file)
+    log.debug("{} done files".format(str(len(done_files))))
+    if not ignore_drive:
+        files = OrderedSet([f for f in files if f[0] not in done_files])
+    else:
+        files = OrderedSet([f for f in files if not map(lambda x: os.path.splitdrive(f[0])[1] == os.path.splitdrive(x), done_files)])
+    log.debug("{} files removed".format(str(found_files_num - len(files))))
+    return files
 
 
 def process_times(time_order: typing.List[str]):
@@ -1092,8 +1131,9 @@ def get_args(parser: ArgumentParser) -> None:
 
     parser.add_argument('--cameras', nargs='*', type=int, help='0-indexed number of camera to stream from')
     parser.add_argument('--input-dir', '-i', help='Input directory to process')
-    parser.add_argument('--output-dir', '-o', help='Output directory for processed files')
+    parser.add_argument('--output-dir', '-o', default='', help='Output directory for processed files')
     parser.add_argument('--ignore-progress', '-I', action='store_true', default=False, help='Ignore progress log')
+    parser.add_argument('--ignore-drive', '-D', action='store_true', default=False, help='Ignore drive letter in progress log')
 
     parser.add_argument('--codec', '-k', default='MP42', help='Codec to write files with')
     parser.add_argument('--fps', '-f', type=int, default=30, help='Frames per second of input files')
