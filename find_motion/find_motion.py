@@ -893,15 +893,21 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_lo
     done: int = 0
 
     try:
-        for status, filename, err in files_processed:
-            if pbar is not None:
-                done += 1
-                pbar.update(done)
-            log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
-            if status is not None:
-                print(filename, file=progress_log)
+        # Collect keyboard events until released
+        with keyboard.Listener(
+            on_press=on_press,
+            on_release=on_release
+        ) as listener:
+            for status, filename, err in files_processed:
+                if pbar is not None:
+                    done += 1
+                    pbar.update(done)
+                log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+                if status is not None:
+                    print(filename, file=progress_log)
     except KeyboardInterrupt:
         log.warning('Ending processing at user request')
+    listener.stop()
 
 
 def run_stream(job: typing.Callable, processes: int, cameras: typing.Iterable[int], progress_log: typing.TextIO) -> None:
