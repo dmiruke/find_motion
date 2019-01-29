@@ -11,13 +11,9 @@ Caches images for a few frames before and after it detects movement
 """
 
 """
-# TODO: allow pausing: https://stackoverflow.com/questions/23449792/how-to-pause-multiprocessing-pool-from-execution
-
 # TODO: have args as provided by argparse take priority over those in the config (currently it is vv)
 
 # TODO: think about r/g/b channel motion detection, instead of just grayscale, or some kind of colour-change detection instead of just tone change - measure rgb on a linear scale, detect change of 'high' amount
-
-# TODO: make frame_cache its own class so we can do cleanup etc. more neatly
 
 # TODO: scale box sizes by location in frame - gradient, or custom matrix
 
@@ -27,8 +23,6 @@ Caches images for a few frames before and after it detects movement
     https://docs.opencv.org/3.2.0/d9/d7a/classcv_1_1xphoto_1_1WhiteBalancer.html
 
 # TODO: add other output streams - not just to files, to cloud, sFTP server or email
-
-# TODO: option to ignore drive letter in checking for previously processed files (allows mounting an SD card in an SD card reader or USB reader that may get a different drive letter on Windows)
 """
 
 import sys
@@ -51,7 +45,8 @@ import typing
 from collections import deque
 
 from functools import partial
-from multiprocessing import Pool
+from multiprocessing import Pool, Event
+from pynput import keyboard
 
 import logging
 import progressbar
@@ -95,12 +90,42 @@ MASK_SCHEMA = {
     }
 }
 
+unpaused = Event()
 
-def init_worker() -> None:
+def init_worker(event) -> None:
     """
     Supress signal handling in the worker processes so that they don't capture SIGINT (ctrl-c)
+
+    Set an event so we can pause workers
     """
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    global unpaused
+    unpaused = event
+
+
+def on_press(key) -> bool:
+    """
+    Listen for spacebar keypresses in controller process, set event in worker processes to pause them
+    """
+    log.debug(key)
+    if key == keyboard.Key.esc:
+        # Stop listener
+        return False
+    if key == keyboard.Key.space:
+        if unpaused.is_set():
+            unpaused.clear()
+            log.debug('Pausing')
+        else:
+            unpaused.set()
+            log.debug('Resuming')
+    return True
+
+
+def on_release(key) -> bool:
+    if key == keyboard.Key.esc:
+        # Stop listener
+        return False
+    return True
 
 
 class VideoError(Exception):
@@ -626,6 +651,8 @@ class VideoMotion(object):
         Main loop. Find motion in frames.
         """
         while self.is_open():
+            unpaused.wait()
+
             if not self.read():
                 break
 
@@ -760,14 +787,14 @@ def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
     try:
         vid = VideoMotion(filename=filename, **kwargs)
         if vid.loaded:
-            err, err_msg = vid.find_motion()
+            wrote_frames, err_msg = vid.find_motion()
         else:
-            err = None
+            wrote_frames = None
             err_msg = 'Video did not load successfully'
     except Exception as e:
         err_msg = 'Error processing video {}: {}'.format(filename, e)
-        err = None
-    return (err, filename, err_msg)
+        wrote_frames = None
+    return (wrote_frames, filename, err_msg)
 
 
 class DummyProgressBar(object):
@@ -802,6 +829,8 @@ def get_progress(log_file: str) -> set:
 def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None) -> None:
     """
     Create and run a pool of workers
+
+    Allows pausing by pressing the spacebar
     """
     if not files:
         raise ValueError('More than 0 files needed')
@@ -811,32 +840,46 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
     files_written: typing.Set = set()
     results: list = []
 
+    global unpaused
+
     try:
-        pool = Pool(processes=processes, initializer=init_worker)
+        pool = Pool(processes=processes, initializer=partial(init_worker, unpaused))
+        unpaused.set()
         for filename in files:
             results.append(pool.apply_async(job, (filename,)))
+        num_err = 0
+        num_wrote = 0
         while True:
-            files_done = {res.get() for res in results if res.ready()}
-            num_done = len(files_done)
-            if num_done > done:
-                done = num_done
-            if done > 0:
-                new = files_done.difference(files_written)
-                files_written.update(new)
-                for status, filename, err_msg in new:
-                    log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
-                    if err_msg:
-                        log.error('Error processing {}: {}'.format(filename, err_msg))
-                    if status is not None and progress_log is not None:
-                        print(filename, file=progress_log)
-            pbar.update(done)
-            if num_done == num_files:
-                log.debug("All processes completed")
-                break
-            time.sleep(1)
+            # Collect keyboard events until released
+            with keyboard.Listener(
+                on_press=on_press,
+                on_release=on_release
+                ) as listener:
+                files_done = {res.get() for res in results if res.ready()}
+                num_done = len(files_done)
+                if num_done > done:
+                    done = num_done
+                if done > 0:
+                    new = files_done.difference(files_written)
+                    files_written.update(new)
+                    for wrote_frames, filename, err_msg in new:
+                        log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output)'))
+                        if err_msg:
+                            log.error('Error processing {}: {}'.format(filename, err_msg))
+                            num_err += 1
+                        if wrote_frames:
+                            num_wrote += 1
+                            if progress_log is not None:
+                                print(filename, file=progress_log)
+                pbar.update(done)
+                if num_done == num_files:
+                    log.debug("All processes completed. {} errors, wrote {} files".format(num_err, num_wrote))
+                    break
+                time.sleep(1)
     except KeyboardInterrupt:
         log.warning('Ending processing at user request')
 
+    listener.stop()
     pool.terminate()
 
 
