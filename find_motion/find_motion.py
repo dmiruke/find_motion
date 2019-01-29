@@ -90,7 +90,9 @@ MASK_SCHEMA = {
     }
 }
 
+
 unpaused = Event()
+
 
 def init_worker(event) -> None:
     """
@@ -854,7 +856,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
             with keyboard.Listener(
                 on_press=on_press,
                 on_release=on_release
-                ) as listener:
+            ) as listener:
                 files_done = {res.get() for res in results if res.ready()}
                 num_done = len(files_done)
                 if num_done > done:
