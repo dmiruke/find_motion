@@ -18,9 +18,7 @@ Caches images for a few frames before and after it detects movement
 # TODO: scale box sizes by location in frame - gradient, or custom matrix
 
 # TODO: look at more OpenCV functions, e.g.
-    https://docs.opencv.org/3.2.0/d7/df6/classcv_1_1BackgroundSubtractor.html
-    https://docs.opencv.org/3.2.0/dd/d73/classcv_1_1bioinspired_1_1RetinaFastToneMapping.html
-    https://docs.opencv.org/3.2.0/d9/d7a/classcv_1_1xphoto_1_1WhiteBalancer.html
+    https://docs.opencv.org/3.2.0/d7/de9/group__video.html
 
 # TODO: add other output streams - not just to files, to cloud, sFTP server or email
 """
@@ -212,7 +210,7 @@ class VideoFrame(object):
         """
         Find the threshold of the diff
         """
-        self.thresh = cv2.threshold(self.frame_delta, thresh, 255, cv2.THRESH_BINARY)[1]
+        self.thresh = cv2.threshold(self.frame_delta, thresh, maxval=255, type=cv2.THRESH_BINARY)[1]
 
 
     def find_contours(self) -> None:
@@ -221,9 +219,9 @@ class VideoFrame(object):
         """
         # dilate the thresholded image to fill in holes, then find contours
         # on thresholded image
-        self.thresh = cv2.dilate(self.thresh, None, iterations=2)
-        cnts = cv2.findContours(self.thresh.copy(), cv2.RETR_EXTERNAL,
-                                cv2.CHAIN_APPROX_SIMPLE)
+        self.thresh = cv2.dilate(self.thresh, kernel=None, iterations=2)
+        cnts = cv2.findContours(self.thresh.copy(), mode=cv2.RETR_EXTERNAL,
+                                method=cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if imutils.is_cv2() else cnts[1]
         self.contours = cnts
 
@@ -1061,7 +1059,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
                   show=args.show, codec=args.codec,
                   log_level=logging.DEBUG if args.debug else logging.INFO,
                   mem=args.mem, cleanup=args.cleanup,
-                  blur_scale=args.blur_scale, min_box_scale=args.min_box_scale,
+                  blur_scale=args.blur_scale, box_size=args.box_size, min_box_scale=args.min_box_scale,
                   threshold=args.threshold, avg=args.avg,
                   fps=args.fps, min_time=args.mintime, cache_time=args.cachetime)
 
@@ -1195,7 +1193,8 @@ def get_args(parser: ArgumentParser) -> None:
     parser.add_argument('--masks_file', help='File holding mask coordinates (JSON)')
 
     parser.add_argument('--blur-scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width (used as 1/blur_scale)')
-    parser.add_argument('--min-box-scale', '-B', type=int, default=50, help='Scale of minimum motion compared to video width (used as 1/min_box_scale')
+    parser.add_argument('--box-size', '-B', type=int, default=100, help='Pixel size to scale the video to for processing')
+    parser.add_argument('--min-box-scale', '-mbs', type=int, default=50, help='Scale of minimum motion compared to video width (used as 1/min_box_scale')
     parser.add_argument('--threshold', '-t', type=int, default=12, help='Threshold for change in grayscale')
     parser.add_argument('--mintime', '-M', type=float, default=0.5, help='Minimum time for motion, in seconds')
     parser.add_argument('--cachetime', '-C', type=float, default=1.0, help='How long to cache, in seconds')
