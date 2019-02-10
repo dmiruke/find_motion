@@ -103,15 +103,18 @@ def init_worker(event) -> None:
     unpaused = event
 
 
-def on_press(key) -> bool:
+def on_press(key, held=set()) -> bool:
     """
     Listen for spacebar keypresses in controller process, set event in worker processes to pause them
+
+    This listens to keypress on all programs, so we pick a strange and unusual key combination - shift-pause
     """
-    log.debug(key)
+    log.debug(str(key) + ' down')
+    held.add(key)
     if key == keyboard.Key.esc:
         # Stop listener
         return False
-    if key == keyboard.Key.space:
+    if key == keyboard.Key.pause and keyboard.Key.shift in held and keyboard.Key.alt_l in held:
         if unpaused.is_set():
             unpaused.clear()
             log.debug('Pausing')
@@ -122,6 +125,8 @@ def on_press(key) -> bool:
 
 
 def on_release(key) -> bool:
+    log.debug(str(key) + ' up')
+    held.remove(key)
     if key == keyboard.Key.esc:
         # Stop listener
         return False
@@ -867,7 +872,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
                         if err_msg:
                             log.error('Error processing {}: {}'.format(filename, err_msg))
                             num_err += 1
-                        else:
+                        else: 
                             if progress_log is not None:
                                 print(filename, file=progress_log)
                         if wrote_frames:
