@@ -801,13 +801,13 @@ class DummyProgressBar(object):
     """
     A pretend progress bar
     """
-    def __init__(self) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         pass
 
-    def __exit__(self, *args) -> None:
+    def __exit__(self, *args, **kwargs) -> None:
         pass
 
-    def __enter__(self, *args):
+    def __enter__(self, *args, **kwargs) -> object:
         return self
 
     def update(self, *args, **kwargs) -> None:
@@ -875,6 +875,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
                 if num_done == num_files:
                     log.debug("All processes completed. {} errors, wrote {} files".format(num_err, num_wrote))
                     break
+                unpaused.wait()
                 time.sleep(1)
     except KeyboardInterrupt:
         log.warning('Ending processing at user request')
@@ -1131,6 +1132,10 @@ def process_progress(files: OrderedSet, log_file: str, ignore_drive: bool=False)
 
 def process_times(time_order: typing.List[str]):
     times = []
+
+    if time_order is None:
+        return times
+
     for time_slot in time_order:
         try:
             interval = list(map(lambda t: strptime(t, '%H:%M'), time_slot.split('-')))
