@@ -1151,7 +1151,7 @@ def process_config(config_file: str, args: Namespace) -> Namespace:
     config.read(config_file)
     for setting, value in config['settings'].items():
         use_value: typing.Any = value
-        if setting in ('processes', 'blur_scale', 'min_box_scale', 'threshold', 'fps'):
+        if setting in ('processes', 'blur_scale', 'min_box_scale', 'threshold', 'fps', 'box_size'):
             use_value = int(value)
         if setting in ('mintime', 'cachetime', 'avg'):
             use_value = float(value)
