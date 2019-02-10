@@ -65,7 +65,7 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 # pylint: enable=invalid-name
 
-LINE_BUFFERED = 1
+LINE_BUFFERED: int = 1
 
 # Color constants
 BLACK = (0, 0, 0)
