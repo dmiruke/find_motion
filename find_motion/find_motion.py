@@ -867,10 +867,11 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
                         if err_msg:
                             log.error('Error processing {}: {}'.format(filename, err_msg))
                             num_err += 1
-                        if wrote_frames:
-                            num_wrote += 1
+                        else:
                             if progress_log is not None:
                                 print(filename, file=progress_log)
+                        if wrote_frames:
+                            num_wrote += 1
                 pbar.update(done)
                 if num_done == num_files:
                     log.debug("All processes completed. {} errors, wrote {} files".format(num_err, num_wrote))
@@ -880,6 +881,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
     except KeyboardInterrupt:
         log.warning('Ending processing at user request')
 
+    unpaused.clear()
     listener.stop()
     pool.terminate()
 
