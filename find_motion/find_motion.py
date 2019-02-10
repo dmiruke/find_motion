@@ -102,31 +102,33 @@ def init_worker(event) -> None:
     global unpaused
     unpaused = event
 
+HELD=set()
 
-def on_press(key, held=set()) -> bool:
+def on_press(key) -> bool:
     """
     Listen for spacebar keypresses in controller process, set event in worker processes to pause them
 
     This listens to keypress on all programs, so we pick a strange and unusual key combination - shift-pause
     """
     log.debug(str(key) + ' down')
-    held.add(key)
+    log.debug(HELD)
     if key == keyboard.Key.esc:
         # Stop listener
         return False
-    if key == keyboard.Key.pause and keyboard.Key.shift in held and keyboard.Key.alt_l in held:
+    if key == keyboard.Key.pause and not keyboard.Key.pause in HELD and keyboard.Key.shift in HELD and keyboard.Key.alt_l in HELD:
         if unpaused.is_set():
             unpaused.clear()
             log.debug('Pausing')
         else:
             unpaused.set()
             log.debug('Resuming')
+    HELD.add(key)
     return True
 
 
 def on_release(key) -> bool:
     log.debug(str(key) + ' up')
-    held.remove(key)
+    HELD.remove(key)
     if key == keyboard.Key.esc:
         # Stop listener
         return False
@@ -860,28 +862,28 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
                 on_press=on_press,
                 on_release=on_release
             ) as listener:
-                files_done = {res.get() for res in results if res.ready()}
-                num_done = len(files_done)
-                if num_done > done:
-                    done = num_done
-                if done > 0:
-                    new = files_done.difference(files_written)
-                    files_written.update(new)
-                    for wrote_frames, filename, err_msg in new:
-                        log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output)'))
-                        if err_msg:
-                            log.error('Error processing {}: {}'.format(filename, err_msg))
-                            num_err += 1
-                        else: 
-                            if progress_log is not None:
-                                print(filename, file=progress_log)
-                        if wrote_frames:
-                            num_wrote += 1
-                pbar.update(done)
-                if num_done == num_files:
-                    log.debug("All processes completed. {} errors, wrote {} files".format(num_err, num_wrote))
-                    break
-                unpaused.wait()
+                if unpaused.is_set():
+                    files_done = {res.get() for res in results if res.ready()}
+                    num_done = len(files_done)
+                    if num_done > done:
+                        done = num_done
+                    if done > 0:
+                        new = files_done.difference(files_written)
+                        files_written.update(new)
+                        for wrote_frames, filename, err_msg in new:
+                            log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output)'))
+                            if err_msg:
+                                log.error('Error processing {}: {}'.format(filename, err_msg))
+                                num_err += 1
+                            else: 
+                                if progress_log is not None:
+                                    print(filename, file=progress_log)
+                            if wrote_frames:
+                                num_wrote += 1
+                    pbar.update(done)
+                    if num_done == num_files:
+                        log.debug("All processes completed. {} errors, wrote {} files".format(num_err, num_wrote))
+                        break
                 time.sleep(1)
     except KeyboardInterrupt:
         log.warning('Ending processing at user request')
