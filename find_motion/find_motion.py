@@ -1160,6 +1160,8 @@ def process_config(config_file: str, args: Namespace) -> Namespace:
     Read an INI style config
 
     TODO: apply argparse validation to the config values
+
+    TODO: replace any - with an _
     """
     config: ConfigParser = ConfigParser()
     config.read(config_file)
@@ -1169,7 +1171,7 @@ def process_config(config_file: str, args: Namespace) -> Namespace:
             use_value = int(value)
         if setting in ('mintime', 'cachetime', 'avg'):
             use_value = float(value)
-        if setting in ('mem', 'progress', 'debug', 'show', 'ignore_progress'):
+        if setting in ('mem', 'progress', 'debug', 'show', 'ignore_progress', 'ignore_drive'):
             if value == 'True':
                 use_value = True
             elif value == 'False':
