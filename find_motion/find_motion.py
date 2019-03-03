@@ -11,6 +11,8 @@ Caches images for a few frames before and after it detects movement
 """
 
 """
+# TODO: fix --ignore-drive, it's broken
+
 # TODO: have args as provided by argparse take priority over those in the config (currently it is vv)
 
 # TODO: think about r/g/b channel motion detection, instead of just grayscale, or some kind of colour-change detection instead of just tone change - measure rgb on a linear scale, detect change of 'high' amount
@@ -102,20 +104,22 @@ def init_worker(event) -> None:
     global unpaused
     unpaused = event
 
-HELD=set()
 
-def on_press(key) -> bool:
+HELD: set = set()
+
+
+def on_press(key: keyboard.Key) -> bool:
     """
     Listen for spacebar keypresses in controller process, set event in worker processes to pause them
 
     This listens to keypress on all programs, so we pick a strange and unusual key combination - shift-pause
     """
     log.debug(str(key) + ' down')
-    log.debug(HELD)
+    log.debug(str(HELD))
     if key == keyboard.Key.esc:
         # Stop listener
         return False
-    if key == keyboard.Key.pause and not keyboard.Key.pause in HELD and keyboard.Key.shift in HELD and keyboard.Key.alt_l in HELD:
+    if key == keyboard.Key.pause and keyboard.Key.pause not in HELD and keyboard.Key.shift in HELD and keyboard.Key.alt_l in HELD:
         if unpaused.is_set():
             unpaused.clear()
             log.debug('Pausing')
@@ -126,7 +130,7 @@ def on_press(key) -> bool:
     return True
 
 
-def on_release(key) -> bool:
+def on_release(key: keyboard.Key) -> bool:
     log.debug(str(key) + ' up')
     HELD.remove(key)
     if key == keyboard.Key.esc:
@@ -196,9 +200,11 @@ class VideoFrame(object):
     """
     encapsulate frame stuff here, out of main video class
     """
-    def __init__(self, frame) -> None:
-        self.frame: np_ndarray = frame
-        self.raw: np_ndarray = self.frame.copy()
+    def __init__(self, frame, show=False) -> None:
+        self.raw: np_ndarray = frame
+        self.frame: np_ndarray
+        if show:
+            self.frame = self.raw.copy()
         self.in_cache: bool = False
         self.contours = None
         self.frame_delta: np_ndarray = None
@@ -679,6 +685,7 @@ class VideoMotion(object):
                 cv2.imshow('thresh', self.current_frame.thresh)
                 cv2.imshow('blur', self.current_frame.blur)
                 cv2.imshow('raw', self.current_frame.raw)
+                cv2.imshow('frame', self.current_frame.frame)
 
             self.current_frame.cleanup()
 
@@ -875,7 +882,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
                             if err_msg:
                                 log.error('Error processing {}: {}'.format(filename, err_msg))
                                 num_err += 1
-                            else: 
+                            else:
                                 if progress_log is not None:
                                     print(filename, file=progress_log)
                             if wrote_frames:
@@ -1086,7 +1093,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
 
             # sort out time ordering priority
             time_order = process_times(args.time_order)
-            log.debug(time_order)
+            log.debug(str(time_order))
 
             # find files on disk
             in_files: typing.List[str] = verify_files(args.files)
@@ -1127,6 +1134,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
         sys.exit(1)
 
 
+# TODO: fix ignore_drive
 def process_progress(files: OrderedSet, log_file: str, ignore_drive: bool=False):
     found_files_num = len(files)
     done_files = get_progress(log_file)
@@ -1139,15 +1147,16 @@ def process_progress(files: OrderedSet, log_file: str, ignore_drive: bool=False)
     return files
 
 
-def process_times(time_order: typing.List[str]):
-    times = []
+def process_times(time_order: typing.List[str]) -> typing.List[typing.Tuple[time.struct_time, time.struct_time]]:
+    times: typing.List[typing.Tuple[time.struct_time, time.struct_time]] = []
 
     if time_order is None:
         return times
 
     for time_slot in time_order:
         try:
-            interval = list(map(lambda t: strptime(t, '%H:%M'), time_slot.split('-')))
+            res: typing.List[time.struct_time] = list(map(lambda t: strptime(t, '%H:%M'), time_slot.split('-')))
+            interval: typing.Tuple[time.struct_time, time.struct_time] = (res[0], res[1])
         except ValueError as e:
             log.error('Time interval {} misparsed: {}'.format(time_slot, e))
             continue
