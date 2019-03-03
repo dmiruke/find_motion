@@ -1,6 +1,6 @@
 # find_motion - Motion detection with OpenCV
 
-Video processing script to detect motion, with tunable parameters.
+Video processing Python 3 script to detect motion, with tunable parameters.
 
 Caches images for a few frames before and after it detects movement.
 
@@ -55,7 +55,7 @@ Use the same names as the optional arguments given in the help for the fields of
 
 ### Detailed usage
 
-Use ```find_motion.py -h``` and ```pydoc find_motion.py``` to get more detailed documentation.
+Use ```find_motion.py -h``` and ```pydoc3 find_motion.py``` to get more detailed documentation.
 
 ## Installing
 
