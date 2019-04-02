@@ -206,6 +206,7 @@ class VideoFrame(object):
         self.in_cache: bool = False
         self.contours = None
         self.frame_delta: np_ndarray = None
+        self.gray: np_ndarray = None
         self.thresh: np_ndarray = None
         self.blur: np_ndarray = None
 
@@ -399,8 +400,8 @@ class VideoMotion(object):
 
         try:
             self.outfile = cv2.VideoWriter(self.outfile_name,
-                                        cv2.VideoWriter_fourcc(*self.codec),
-                                        self.fps, (self.frame_width, self.frame_height))
+                                           cv2.VideoWriter_fourcc(*self.codec),
+                                           self.fps, (self.frame_width, self.frame_height))
         except Exception as e:
             self.log.error('Failed to create output file: {}'.format(e))
             raise e
@@ -537,7 +538,7 @@ class VideoMotion(object):
 
 
     @staticmethod
-    def scale_area(area: list, scale: float) -> list:
+    def scale_area(area: typing.Tuple[typing.Tuple[int, int], typing.Tuple[int, int]], scale: float) -> list:
         """
         Scale the area by the scale factor
         """
@@ -630,7 +631,7 @@ class VideoMotion(object):
 
             if self.show:
                 cv2.rectangle(frame.frame, *self.scale_area(area, 1 / self.scale), RED, 3)
-            
+
             self.log.debug('Object found!')
 
 
@@ -1016,11 +1017,11 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_lo
     listener.stop()
 
 
-def run_stream(job: typing.Callable, processes: int, cameras: typing.Iterable[int], progress_log: typing.TextIO) -> None:
+def run_stream(job: typing.Callable, processes: int, cameras: typing.List[int], progress_log: typing.TextIO) -> None:
     if not cameras:
         raise ValueError('More than 0 cameras needed')
 
-    log.debug(cameras)
+    log.debug(str(cameras))
 
     num_cameras: int = len(list(cameras))
     done: int = 0
@@ -1045,23 +1046,23 @@ def run_stream(job: typing.Callable, processes: int, cameras: typing.Iterable[in
 
                 if num_done > done:
                     done = num_done
-                
+
                 if done > 0:
                     new = files_done.difference(files_written)
                     files_written.update(new)
-                
+
                     for status, stream, err_msg in new:
                         log.debug('Done {}{}'.format(stream, '' if status else ' (no output)'))
-                
+
                         if err_msg:
                             log.error('Ended processing camera {}: {}'.format(stream, err_msg))
-                
+
                         print('Finished streaming from camera {}'.format(stream), file=progress_log)
-                
+
                 if num_done == num_cameras:
                     log.debug("All processes completed")
                     break
-                
+
                 time.sleep(1)
         except KeyboardInterrupt:
             log.warning('Ending processing at user request')
