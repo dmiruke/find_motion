@@ -202,9 +202,7 @@ class VideoFrame(object):
     """
     def __init__(self, frame, show=False) -> None:
         self.raw: np_ndarray = frame
-        self.frame: np_ndarray
-        if show:
-            self.frame = self.raw.copy()
+        self.frame: np_ndarray = self.raw.copy()    # TODO: work out how to remove this if show is False and still have things work
         self.in_cache: bool = False
         self.contours = None
         self.frame_delta: np_ndarray = None
@@ -265,7 +263,7 @@ class VideoMotion(object):
                  threshold: int=7, avg: float=0.1, blur_scale: int=20,
                  mask_areas: list=None, show: bool=False,
                  codec: str='MJPG', log_level: int=logging.INFO,
-                 mem: bool=False, cleanup: bool=False) -> None:
+                 mem: bool=False, cleanup: bool=False, multiprocess: bool=False) -> None:
         self.filename = filename
 
         if self.filename is None:
@@ -275,6 +273,11 @@ class VideoMotion(object):
         self.log.setLevel(log_level)
 
         self.log.debug("Reading from {}".format(self.filename))
+
+        self.multiprocess = multiprocess
+
+        if not self.multiprocess:
+            log.debug('Single process')
 
         self.outfile: cv2.VideoWriter = None    # type: ignore
         self.outfiles: int = 0
@@ -300,6 +303,9 @@ class VideoMotion(object):
         self.debug: bool = log_level == logging.DEBUG
         self.mem: bool = mem
         self.cleanup_flag: bool = cleanup
+
+        # TODO: make path relative to this file
+        self.cascade = cv2.CascadeClassifier("./find_motion/haarcascade_frontalface_default.xml")
 
         self.log.debug(self.codec)
 
@@ -366,6 +372,8 @@ class VideoMotion(object):
             raise VideoError("Video info malformed - {} is 0: {}".format(broken, self.filename))
         if self.amount_of_frames == 0:
             log.warning('Video info malformed - frames reported as 0')
+        elif self.amount_of_frames == -1:
+            log.debug('Streaming - frames reported as -1')
         return
 
 
@@ -389,9 +397,15 @@ class VideoMotion(object):
         if self.debug:
             self.log.debug("Writing to {}".format(self.outfile_name))
 
-        self.outfile = cv2.VideoWriter(self.outfile_name,
-                                       cv2.VideoWriter_fourcc(*self.codec),
-                                       self.fps, (self.frame_width, self.frame_height))
+        try:
+            self.outfile = cv2.VideoWriter(self.outfile_name,
+                                        cv2.VideoWriter_fourcc(*self.codec),
+                                        self.fps, (self.frame_width, self.frame_height))
+        except Exception as e:
+            self.log.error('Failed to create output file: {}'.format(e))
+            raise e
+
+        self.log.debug('Made output file')
 
 
     def _make_gaussian(self) -> None:
@@ -409,8 +423,8 @@ class VideoMotion(object):
         """
         frame = self.current_frame if frame is None else frame
         small = imutils.resize(frame.raw, width=self.box_size)
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        frame.blur = cv2.GaussianBlur(gray, self.gaussian, 0)
+        frame.gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        frame.blur = cv2.GaussianBlur(frame.gray, self.gaussian, 0)
 
 
     def read(self) -> bool:
@@ -434,6 +448,7 @@ class VideoMotion(object):
         frame = self.current_frame if frame is None else frame
 
         if self.show:
+            self.log.debug('Showing frame on output')
             cv2.imshow('frame', frame.frame)
 
         if not self.wrote_frames:
@@ -443,6 +458,7 @@ class VideoMotion(object):
         try:
             self.outfile.write(frame.raw)
         except Exception as e:
+            self.log.warning('Having to create output file due to exception: {}'.format(e))
             self._make_outfile()
             self.outfile.write(frame.raw)
 
@@ -458,6 +474,7 @@ class VideoMotion(object):
         try:
             self.outfile.write(frame)
         except Exception as e:
+            self.log.warning('Having to create output file due to exception: {}'.format(e))
             self._make_outfile()
             self.outfile.write(frame)
 
@@ -476,6 +493,7 @@ class VideoMotion(object):
 
                 for frame in self.frame_cache:
                     if frame is not None:
+                        self.log.debug('Outputting cached raw frame')
                         self.output_raw_frame(frame.raw)
                         if self.cleanup_flag:
                             frame.in_cache = False
@@ -483,25 +501,32 @@ class VideoMotion(object):
                             del frame
 
                 self.frame_cache.clear()
-            # draw the text
+            # draw the text and identify objects
             if self.show:
                 self.draw_text()
+                self.find_objects()
+
+            self.log.debug('Outputting frame')
 
             self.output_frame()
         else:
             self.log.debug('No movement, putting in cache')
             if self.cleanup_flag:
-                cache_size = len(self.frame_cache)
-                self.log.debug(str(cache_size))
-                if cache_size == self.cache_frames:
-                    self.log.debug('Clearing first cache entry')
-                    delete_frame = self.frame_cache.popleft()
-                    if delete_frame is not None:
-                        delete_frame.in_cache = False
-                        delete_frame.cleanup()
-                        del delete_frame
+                self.cleanup_cache()
             self.frame_cache.append(self.current_frame)
             self.current_frame.in_cache = True
+
+
+    def cleanup_cache(self) -> None:
+        cache_size = len(self.frame_cache)
+        self.log.debug(str(cache_size))
+        if cache_size == self.cache_frames:
+            self.log.debug('Clearing first cache entry')
+            delete_frame = self.frame_cache.popleft()
+            if delete_frame is not None:
+                delete_frame.in_cache = False
+                delete_frame.cleanup()
+                del delete_frame
 
 
     def is_open(self) -> bool:
@@ -593,6 +618,22 @@ class VideoMotion(object):
         return
 
 
+    # TODO: add multiple classes of object detection
+    def find_objects(self, frame: VideoFrame=None) -> None:
+        frame = self.current_frame if frame is None else frame
+
+        objects = self.cascade.detectMultiScale(frame.gray, scaleFactor=1.1, minNeighbors=5)  # TODO: take scaleFactor and minNeighbours as parameters
+
+        for rect in objects:
+
+            area = VideoMotion.make_area(rect)
+
+            if self.show:
+                cv2.rectangle(frame.frame, *self.scale_area(area, 1 / self.scale), RED, 3)
+            
+            self.log.debug('Object found!')
+
+
     def draw_text(self, frame: VideoFrame=None) -> None:
         """
         Put the status text on the frame
@@ -607,13 +648,18 @@ class VideoMotion(object):
         return
 
 
-    def make_box(self, contour, frame: VideoFrame=None) -> tuple:
+    def make_box(self, contour, frame: VideoFrame=None) -> typing.Tuple[typing.Tuple[int, int], typing.Tuple[int, int]]:
         """
         Draw a green bounding box on the frame
         """
         frame = self.current_frame if frame is None else frame
+        return VideoMotion.make_area(cv2.boundingRect(contour))
+
+
+    @staticmethod
+    def make_area(object_tuple: typing.Tuple[int, int, int, int]) -> typing.Tuple[typing.Tuple[int, int], typing.Tuple[int, int]]:
         # pylint: disable=invalid-name
-        (x, y, w, h) = cv2.boundingRect(contour)
+        (x, y, w, h) = object_tuple
         area = ((x, y), (x + w, y + h))
         return area
 
@@ -664,28 +710,58 @@ class VideoMotion(object):
         Main loop. Find motion in frames.
         """
         while self.is_open():
-            unpaused.wait()
+
+            if self.multiprocess:
+                self.log.debug('Waiting...')
+                unpaused.wait()
 
             if not self.read():
+                self.log.debug('Reading did not succeed')
                 break
 
             self.blur_frame()
             self.mask_off_areas()
             self.find_diff()
 
+            self.log.debug('Blurred frame, masked off, and diff made')
+
             # draw contours and set movement
-            self.find_movement()
+            try:
+                self.find_movement()
+            except Exception as e:
+                self.log.error('find_movement: {}'.format(e))
+
+            self.log.debug('Searched for movement')
 
             if self.mem:
                 self.log.info(mem_top())
 
             self.decide_output()
 
+            self.log.debug('Decided output')
+
             if self.show:
-                cv2.imshow('thresh', self.current_frame.thresh)
-                cv2.imshow('blur', self.current_frame.blur)
-                cv2.imshow('raw', self.current_frame.raw)
-                cv2.imshow('frame', self.current_frame.frame)
+                if self.frame_height > 0 and self.frame_width > 0:
+                    try:
+                        cf: VideoFrame = self.current_frame
+                        if cf.thresh is not None:
+                            self.log.debug('Showing threshold frame')
+                            cv2.imshow('thresh', cf.thresh)
+                        if cf.gray is not None:
+                            self.log.debug('Showing gray frame')
+                            cv2.imshow('gray', cf.gray)
+                        if cf.blur is not None:
+                            self.log.debug('Showing blur frame')
+                            cv2.imshow('blur', cf.blur)
+                        if cf.raw is not None:
+                            self.log.debug('Showing raw frame')
+                            cv2.imshow('raw', cf.raw)
+                    except Exception as e:
+                        self.log.error('Oops: {}'.format(e))
+                else:
+                    self.log.warning('Not showing frames, height or width is 0')
+
+            self.log.debug('Decided to show frames or not')
 
             self.current_frame.cleanup()
 
@@ -801,6 +877,7 @@ def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
     try:
         vid = VideoMotion(filename=filename, **kwargs)
         if vid.loaded:
+            log.debug('Video loaded')
             wrote_frames, err_msg = vid.find_motion()
         else:
             wrote_frames = None
@@ -840,7 +917,7 @@ def get_progress(log_file: str) -> set:
         return set()
 
 
-def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None) -> None:
+def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None) -> None:
     """
     Create and run a pool of workers
 
@@ -859,10 +936,13 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
     try:
         pool = Pool(processes=processes, initializer=partial(init_worker, unpaused))
         unpaused.set()
+
         for filename in files:
             results.append(pool.apply_async(job, (filename,)))
+
         num_err = 0
         num_wrote = 0
+
         while True:
             # Collect keyboard events until released
             with keyboard.Listener(
@@ -872,22 +952,29 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int=2, files: typ
                 if unpaused.is_set():
                     files_done = {res.get() for res in results if res.ready()}
                     num_done = len(files_done)
+
                     if num_done > done:
                         done = num_done
+
                     if done > 0:
                         new = files_done.difference(files_written)
                         files_written.update(new)
+
                         for wrote_frames, filename, err_msg in new:
                             log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output)'))
+
                             if err_msg:
                                 log.error('Error processing {}: {}'.format(filename, err_msg))
                                 num_err += 1
                             else:
                                 if progress_log is not None:
                                     print(filename, file=progress_log)
+
                             if wrote_frames:
                                 num_wrote += 1
+
                     pbar.update(done)
+
                     if num_done == num_files:
                         log.debug("All processes completed. {} errors, wrote {} files".format(num_err, num_wrote))
                         break
@@ -904,6 +991,8 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_lo
     if not files:
         raise ValueError('More than 0 files needed')
 
+    log.debug('Processing each file one-by-one')
+
     files_processed: typing.Iterable[str] = map(job, files)
     done: int = 0
 
@@ -917,7 +1006,9 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_lo
                 if pbar is not None:
                     done += 1
                     pbar.update(done)
+
                 log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+
                 if status is not None:
                     print(filename, file=progress_log)
     except KeyboardInterrupt:
@@ -929,36 +1020,53 @@ def run_stream(job: typing.Callable, processes: int, cameras: typing.Iterable[in
     if not cameras:
         raise ValueError('More than 0 cameras needed')
 
+    log.debug(cameras)
+
     num_cameras: int = len(list(cameras))
     done: int = 0
     files_written: typing.Set = set()
     results: list = []
 
-    try:
-        pool = Pool(processes=processes, initializer=init_worker)
-        for camera in cameras:
-            results.append(pool.apply_async(job, (camera,)))
-        while True:
-            files_done = {res.get() for res in results if res.ready()}
-            num_done = len(files_done)
-            if num_done > done:
-                done = num_done
-            if done > 0:
-                new = files_done.difference(files_written)
-                files_written.update(new)
-                for status, stream, err_msg in new:
-                    log.debug('Done {}{}'.format(stream, '' if status else ' (no output)'))
-                    if err_msg:
-                        log.error('Ended processing camera {}: {}'.format(stream, err_msg))
-                    print('Finished streaming from camera {}'.format(stream), file=progress_log)
-            if num_done == num_cameras:
-                log.debug("All processes completed")
-                break
-            time.sleep(1)
-    except KeyboardInterrupt:
-        log.warning('Ending processing at user request')
+    if num_cameras == 1 and processes == 1:
+        log.debug('Single process, single camera stream')
+        job(cameras[0])
+    else:
+        try:
+            pool = Pool(processes=processes, initializer=partial(init_worker, unpaused))
 
-    pool.terminate()
+            for camera in cameras:
+                results.append(pool.apply_async(job, (camera,)))
+
+            log.debug('Running jobs')
+
+            while True:
+                files_done = {res.get() for res in results if res.ready()}
+                num_done = len(files_done)
+
+                if num_done > done:
+                    done = num_done
+                
+                if done > 0:
+                    new = files_done.difference(files_written)
+                    files_written.update(new)
+                
+                    for status, stream, err_msg in new:
+                        log.debug('Done {}{}'.format(stream, '' if status else ' (no output)'))
+                
+                        if err_msg:
+                            log.error('Ended processing camera {}: {}'.format(stream, err_msg))
+                
+                        print('Finished streaming from camera {}'.format(stream), file=progress_log)
+                
+                if num_done == num_cameras:
+                    log.debug("All processes completed")
+                    break
+                
+                time.sleep(1)
+        except KeyboardInterrupt:
+            log.warning('Ending processing at user request')
+
+        pool.terminate()
 
 
 def test_files(files):
@@ -1078,13 +1186,14 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
                   mem=args.mem, cleanup=args.cleanup,
                   blur_scale=args.blur_scale, box_size=args.box_size, min_box_scale=args.min_box_scale,
                   threshold=args.threshold, avg=args.avg,
-                  fps=args.fps, min_time=args.mintime, cache_time=args.cachetime)
+                  fps=args.fps, min_time=args.mintime, cache_time=args.cachetime, multiprocess=args.processes > 1)
 
     try:
         if args.cameras:
             if args.test:
                 test_stream(args.cameras)
                 sys.exit(0)
+
             # processing camera streams
             with open(log_file, 'a+', LINE_BUFFERED) as progress_log:
                 run_stream(job, args.processes, args.cameras, progress_log)
