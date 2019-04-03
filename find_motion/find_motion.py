@@ -90,6 +90,27 @@ MASK_SCHEMA = {
     }
 }
 
+FIND_MOTION_PATH = os.path.dirname(os.path.realpath(__file__))
+
+CASCADE_LOOKUP = {
+    "frontalcatface": "Cat 1",
+    "frontalcatface_extended": "Cat 2",
+    "frontalface_alt": "Face 1",
+    "frontalface_alt2": "Face 2",
+    "frontalface_alt_tree": "Face 3",
+    "frontalface_default": "Face 4",
+    "fullbody": "Person",
+    "lefteye_2splits": "Eye 1",
+    "licence_plate_rus_16stages": "Car number plate 1",
+    "lowerbody": "Legs",
+    "eye": "Eye 2",
+    "eye_tree_eyeglasses": "Glasses",
+    "profileface": "Face 5",
+    "righteye_2splits": "Eye 3",
+    "russian_plate_number": "Car number plate 2",
+    "smile": "Smile",
+    "upperbody": "Torso"
+}
 
 unpaused = Event()
 
@@ -264,7 +285,9 @@ class VideoMotion(object):
                  threshold: int=7, avg: float=0.1, blur_scale: int=20,
                  mask_areas: list=None, show: bool=False,
                  codec: str='MJPG', log_level: int=logging.INFO,
-                 mem: bool=False, cleanup: bool=False, multiprocess: bool=False) -> None:
+                 mem: bool=False, cleanup: bool=False,
+                 multiprocess: bool=False,
+                 cascades: typing.List[str]=None) -> None:
         self.filename = filename
 
         if self.filename is None:
@@ -297,6 +320,7 @@ class VideoMotion(object):
         self.avg: float = avg
         self.mask_areas: typing.List[typing.Any] = mask_areas if mask_areas is not None else []
         self.show: bool = show
+        self.cascade_names: typing.List[str] = cascades
 
         self.log.debug('Caching {} frames, min motion {} frames'.format(self.cache_frames, self.min_movement_frames))
 
@@ -305,8 +329,9 @@ class VideoMotion(object):
         self.mem: bool = mem
         self.cleanup_flag: bool = cleanup
 
-        # TODO: make path relative to this file
-        self.cascade = cv2.CascadeClassifier("./find_motion/haarcascade_frontalface_default.xml")
+        self.cascades: typing.Dict[str, typing.Any] = None
+        self._load_cascades()
+        self.log.debug(str(self.cascades))
 
         self.log.debug(self.codec)
 
@@ -331,6 +356,21 @@ class VideoMotion(object):
         self._calc_min_area()
         self._make_gaussian()
         self.loaded = self._load_video()
+
+
+    def _load_cascades(self) -> None:
+        """
+        Load object recognition cascades named in options
+        """
+        if self.cascade_names is not None:
+            cascades = {CASCADE_LOOKUP[c]: c for c in self.cascade_names if c in CASCADE_LOOKUP}
+            self.log.debug(str(cascades))
+            for title, cascade in cascades.items():
+                self.log.debug(os.path.join(FIND_MOTION_PATH, 'haarcascades', 'haarcascade_{}.xml'.format(cascade)))
+            self.cascades = {title: cv2.CascadeClassifier(os.path.join(FIND_MOTION_PATH, 'haarcascades', 'haarcascade_{}.xml'.format(cascade))) for title, cascade in cascades.items()}
+        else:
+            self.log.debug('No cascades')
+            self.cascades = dict()
 
 
     def _calc_min_area(self) -> None:
@@ -623,16 +663,28 @@ class VideoMotion(object):
     def find_objects(self, frame: VideoFrame=None) -> None:
         frame = self.current_frame if frame is None else frame
 
-        objects = self.cascade.detectMultiScale(frame.gray, scaleFactor=1.1, minNeighbors=5)  # TODO: take scaleFactor and minNeighbours as parameters
+        self.log.debug('Looking for objects')
 
-        for rect in objects:
+        objects: typing.Dict[str, typing.List] = {}
 
-            area = VideoMotion.make_area(rect)
+        self.log.debug(str(self.cascades))
 
-            if self.show:
-                cv2.rectangle(frame.frame, *self.scale_area(area, 1 / self.scale), RED, 3)
+        for title, cascade in self.cascades.items():
+            self.log.debug('Looking for {}'.format(title))
+            if title not in objects:
+                objects[title] = []
+            found = cascade.detectMultiScale(frame.gray, scaleFactor=1.1, minNeighbors=5)  # TODO: take scaleFactor and minNeighbours as parameters
+            objects[title].extend(found)
 
-            self.log.debug('Object found!')
+        for title, rects in objects.items():
+            for rect in rects:
+
+                area = VideoMotion.make_area(rect)
+
+                if self.show:
+                    cv2.rectangle(frame.frame, *self.scale_area(area, 1 / self.scale), RED, 3)
+
+                self.log.debug('{} found'.format(title))
 
 
     def draw_text(self, frame: VideoFrame=None) -> None:
@@ -1021,7 +1073,7 @@ def run_stream(job: typing.Callable, processes: int, cameras: typing.List[int], 
     if not cameras:
         raise ValueError('More than 0 cameras needed')
 
-    log.debug(str(cameras))
+    log.debug('Cameras: {}'.format(cameras))
 
     num_cameras: int = len(list(cameras))
     done: int = 0
@@ -1187,7 +1239,8 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
                   mem=args.mem, cleanup=args.cleanup,
                   blur_scale=args.blur_scale, box_size=args.box_size, min_box_scale=args.min_box_scale,
                   threshold=args.threshold, avg=args.avg,
-                  fps=args.fps, min_time=args.mintime, cache_time=args.cachetime, multiprocess=args.processes > 1)
+                  fps=args.fps, min_time=args.mintime, cache_time=args.cachetime,
+                  multiprocess=args.processes > 1, cascades=args.object)
 
     try:
         if args.cameras:
@@ -1326,6 +1379,8 @@ def get_args(parser: ArgumentParser) -> None:
 
     parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video')
     parser.add_argument('--masks_file', help='File holding mask coordinates (JSON)')
+
+    parser.add_argument('--object', '-O', nargs='*', type=str, help='Types of objects to detect')
 
     parser.add_argument('--blur-scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width (used as 1/blur_scale)')
     parser.add_argument('--box-size', '-B', type=int, default=100, help='Pixel size to scale the video to for processing')
