@@ -43,6 +43,7 @@ from time import strptime
 import typing
 
 from collections import deque
+import copy
 
 from functools import partial
 from multiprocessing import Pool, Event
@@ -363,11 +364,15 @@ class VideoMotion(object):
         Load object recognition cascades named in options
         """
         if self.cascade_names is not None:
-            cascades = {CASCADE_LOOKUP[c]: c for c in self.cascade_names if c in CASCADE_LOOKUP}
+            if 'ALL' in self.cascade_names:
+                cascades = copy.copy(CASCADE_LOOKUP)
+            else:
+                cascades = {c: CASCADE_LOOKUP[c] for c in self.cascade_names if c in CASCADE_LOOKUP}
+            
             self.log.debug(str(cascades))
-            for title, cascade in cascades.items():
+            for cascade, title in cascades.items():
                 self.log.debug(os.path.join(FIND_MOTION_PATH, 'haarcascades', 'haarcascade_{}.xml'.format(cascade)))
-            self.cascades = {title: cv2.CascadeClassifier(os.path.join(FIND_MOTION_PATH, 'haarcascades', 'haarcascade_{}.xml'.format(cascade))) for title, cascade in cascades.items()}
+            self.cascades = {title: cv2.CascadeClassifier(os.path.join(FIND_MOTION_PATH, 'haarcascades', 'haarcascade_{}.xml'.format(cascade))) for cascade, title in cascades.items()}
         else:
             self.log.debug('No cascades')
             self.cascades = dict()
