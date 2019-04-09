@@ -689,9 +689,24 @@ class VideoMotion(object):
                 area = VideoMotion.make_area(rect)
 
                 if self.show:
-                    cv2.rectangle(frame.frame, *self.scale_area(area, 1 / self.scale), RED, 3)
+                    scaled_area = self.scale_area(area, 1 / self.scale)
+                    cv2.rectangle(frame.frame, *scaled_area, RED, 3)
+                    cv2.putText(frame.frame,
+                                title,
+                                VideoMotion.find_centre(scaled_area),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.5, RED, 2
+                                )
 
                 self.log.debug('{} found'.format(title))
+
+
+    @staticmethod
+    def find_centre(area: typing.List) -> typing.Tuple[int, int]:
+        return (
+            (area[0][0] + area[1][0]) // 2,
+            (area[0][1] + area[1][1]) // 2
+        )
 
 
     def draw_text(self, frame: VideoFrame=None) -> None:
