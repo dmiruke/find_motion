@@ -51,6 +51,7 @@ from pynput import keyboard
 
 import logging
 import progressbar
+from DummyProgressBar import DummyProgressBar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
@@ -69,6 +70,8 @@ log.setLevel(logging.INFO)
 # pylint: enable=invalid-name
 
 LINE_BUFFERED: int = 1
+
+DUMMY_PROGRESS_BAR: DummyProgressBar = DummyProgressBar()
 
 # Color constants
 BLACK = (0, 0, 0)
@@ -368,10 +371,10 @@ class VideoMotion(object):
                 cascades = copy.copy(CASCADE_LOOKUP)
             else:
                 cascades = {c: CASCADE_LOOKUP[c] for c in self.cascade_names if c in CASCADE_LOOKUP}
-            
+
             self.log.debug(str(cascades))
             for cascade, title in cascades.items():
-                self.log.debug(os.path.join(FIND_MOTION_PATH, 'haarcascades', 'haarcascade_{}.xml'.format(cascade)))
+                self.log.debug('{}: {}'.format(title, os.path.join(FIND_MOTION_PATH, 'haarcascades', 'haarcascade_{}.xml'.format(cascade))))
             self.cascades = {title: cv2.CascadeClassifier(os.path.join(FIND_MOTION_PATH, 'haarcascades', 'haarcascade_{}.xml'.format(cascade))) for cascade, title in cascades.items()}
         else:
             self.log.debug('No cascades')
@@ -664,7 +667,6 @@ class VideoMotion(object):
         return
 
 
-    # TODO: add multiple classes of object detection
     def find_objects(self, frame: VideoFrame=None) -> None:
         frame = self.current_frame if frame is None else frame
 
@@ -946,23 +948,6 @@ def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
     return (wrote_frames, filename, err_msg)
 
 
-class DummyProgressBar(object):
-    """
-    A pretend progress bar
-    """
-    def __init__(self, *args, **kwargs) -> None:
-        pass
-
-    def __exit__(self, *args, **kwargs) -> None:
-        pass
-
-    def __enter__(self, *args, **kwargs) -> object:
-        return self
-
-    def update(self, *args, **kwargs) -> None:
-        pass
-
-
 def get_progress(log_file: str) -> set:
     """
     Load the progress log file, get the list of files
@@ -975,7 +960,7 @@ def get_progress(log_file: str) -> set:
         return set()
 
 
-def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DummyProgressBar(), progress_log: typing.TextIO=None) -> None:
+def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.TextIO=None) -> None:
     """
     Create and run a pool of workers
 
@@ -1065,7 +1050,7 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_lo
                     done += 1
                     pbar.update(done)
 
-                log.debug('Done {}{}'.format(filename, '' if status else ' (no output)'))
+                log.debug('Done {}{}'.format(filename, '' if status else ' (no output: {})'.format(err)))
 
                 if status is not None:
                     print(filename, file=progress_log)
