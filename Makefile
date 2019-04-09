@@ -15,4 +15,4 @@ diatra:
 safety:
 	safety check
 
-.PHONY: flake8 mypy all
+.PHONY: flake8 mypy all bandit diatra safety
