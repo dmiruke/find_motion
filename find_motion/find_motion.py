@@ -104,16 +104,16 @@ CASCADE_LOOKUP = {
     "frontalface_alt_tree": "Face 3",
     "frontalface_default": "Face 4",
     "fullbody": "Person",
-    "lefteye_2splits": "Eye 1",
-    "licence_plate_rus_16stages": "Car number plate 1",
+ #   "lefteye_2splits": "Eye 1",
+ #   "licence_plate_rus_16stages": "Car number plate 1",
     "lowerbody": "Legs",
-    "eye": "Eye 2",
-    "eye_tree_eyeglasses": "Glasses",
+ #   "eye": "Eye 2",
+ #   "eye_tree_eyeglasses": "Glasses",
     "profileface": "Face 5",
-    "righteye_2splits": "Eye 3",
-    "russian_plate_number": "Car number plate 2",
-    "smile": "Smile",
-    "upperbody": "Torso"
+ #   "righteye_2splits": "Eye 3",
+ #   "russian_plate_number": "Car number plate 2",
+ #   "smile": "Smile",
+ #   "upperbody": "Torso"
 }
 
 unpaused = Event()
@@ -190,7 +190,7 @@ class VideoInfo(object):
 
 
     def __str__(self) -> str:
-        return "File: {}; frames: {}; {}x{}px".format(self.filename, self.amount_of_frames, self.frame_width, self.frame_height)
+        return "File: {}; {} frames; {}x{}px".format(self.filename, self.amount_of_frames, self.frame_width, self.frame_height)
 
 
     def _load_video(self) -> bool:
@@ -355,6 +355,9 @@ class VideoMotion(object):
         self.movement: bool = False
         self.movement_decay: int = 0
         self.movement_counter: int = 0
+
+        self.object_counter: int = 0
+        self.last_objects: typing.Dict[str, typing.List] = {}
 
         # Initialisation functions
         self._calc_min_area()
@@ -670,26 +673,37 @@ class VideoMotion(object):
     def find_objects(self, frame: VideoFrame=None) -> None:
         frame = self.current_frame if frame is None else frame
 
+        self.object_counter += 1
+        if self.object_counter != 10:    # TODO: take as a parameter
+            self.draw_objects(frame)
+            return
+        self.object_counter = 0
+
         self.log.debug('Looking for objects')
 
-        objects: typing.Dict[str, typing.List] = {}
+        self.last_objects = {}
 
         self.log.debug(str(self.cascades))
 
+        frame.big_gray = imutils.resize(cv2.cvtColor(frame.raw, cv2.COLOR_BGR2GRAY), width=500) # TODO: take as a parameter
+
         for title, cascade in self.cascades.items():
             self.log.debug('Looking for {}'.format(title))
-            if title not in objects:
-                objects[title] = []
-            found = cascade.detectMultiScale(frame.gray, scaleFactor=1.1, minNeighbors=5)  # TODO: take scaleFactor and minNeighbours as parameters
-            objects[title].extend(found)
+            if title not in self.last_objects:
+                self.last_objects[title] = []
+            found = cascade.detectMultiScale(frame.big_gray, scaleFactor=1.1, minNeighbors=5)  # TODO: take scaleFactor and minNeighbours as parameters
+            self.last_objects[title].extend(found)
+            self.draw_objects(frame)
 
-        for title, rects in objects.items():
+
+    def draw_objects(self, frame) -> None:
+        for title, rects in self.last_objects.items():
             for rect in rects:
 
                 area = VideoMotion.make_area(rect)
 
                 if self.show:
-                    scaled_area = self.scale_area(area, 1 / self.scale)
+                    scaled_area = self.scale_area(area, self.frame_width/500) # TODO: take as a parameter
                     cv2.rectangle(frame.frame, *scaled_area, RED, 3)
                     cv2.putText(frame.frame,
                                 title,
@@ -816,25 +830,7 @@ class VideoMotion(object):
             self.log.debug('Decided output')
 
             if self.show:
-                if self.frame_height > 0 and self.frame_width > 0:
-                    try:
-                        cf: VideoFrame = self.current_frame
-                        if cf.thresh is not None:
-                            self.log.debug('Showing threshold frame')
-                            cv2.imshow('thresh', cf.thresh)
-                        if cf.gray is not None:
-                            self.log.debug('Showing gray frame')
-                            cv2.imshow('gray', cf.gray)
-                        if cf.blur is not None:
-                            self.log.debug('Showing blur frame')
-                            cv2.imshow('blur', cf.blur)
-                        if cf.raw is not None:
-                            self.log.debug('Showing raw frame')
-                            cv2.imshow('raw', cf.raw)
-                    except Exception as e:
-                        self.log.error('Oops: {}'.format(e))
-                else:
-                    self.log.warning('Not showing frames, height or width is 0')
+                self.show_frames()
 
             self.log.debug('Decided to show frames or not')
 
@@ -851,6 +847,28 @@ class VideoMotion(object):
 #        self.frame_cache.clear()
 
         return self.wrote_frames, self.err_msg
+
+
+    def show_frames(self) -> None:
+        if self.frame_height > 0 and self.frame_width > 0:
+            try:
+                cf: VideoFrame = self.current_frame
+                if cf.thresh is not None:
+                    self.log.debug('Showing threshold frame')
+                    cv2.imshow('thresh', cf.thresh)
+                if cf.gray is not None:
+                    self.log.debug('Showing gray frame')
+                    cv2.imshow('gray', cf.gray)
+                if cf.blur is not None:
+                    self.log.debug('Showing blur frame')
+                    cv2.imshow('blur', cf.blur)
+                if cf.raw is not None:
+                    self.log.debug('Showing raw frame')
+                    cv2.imshow('raw', cf.raw)
+            except Exception as e:
+                self.log.error('Oops: {}'.format(e))
+        else:
+            self.log.warning('Not showing frames, height or width is 0')
 
 
 def find_files(directory: str) -> typing.List[str]:
@@ -1045,7 +1063,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typin
     pool.terminate()
 
 
-def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_log: typing.TextIO) -> None:
+def run_map(job: typing.Callable, files: typing.Iterable[str],  pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.TextIO=None) -> None:
     if not files:
         raise ValueError('More than 0 files needed')
 
@@ -1074,7 +1092,7 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar, progress_lo
     listener.stop()
 
 
-def run_stream(job: typing.Callable, processes: int, cameras: typing.List[int], progress_log: typing.TextIO) -> None:
+def run_stream(job: typing.Callable, processes: int, cameras: typing.List[int], progress_log: typing.TextIO=None) -> None:
     if not cameras:
         raise ValueError('More than 0 cameras needed')
 
@@ -1180,7 +1198,7 @@ def make_progressbar(progress: bool=False, num_files: int=0) -> progressbar.Prog
                                    redirect_stdout=True,
                                    redirect_stderr=True,
                                    widgets=make_pbar_widgets(num_files)
-                                   ) if progress else DummyProgressBar()
+                                   ) if progress else DUMMY_PROGRESS_BAR
 
 
 def read_masks(masks_file: str) -> list:
