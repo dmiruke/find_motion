@@ -104,16 +104,16 @@ CASCADE_LOOKUP = {
     "frontalface_alt_tree": "Face 3",
     "frontalface_default": "Face 4",
     "fullbody": "Person",
- #   "lefteye_2splits": "Eye 1",
- #   "licence_plate_rus_16stages": "Car number plate 1",
+    #   "lefteye_2splits": "Eye 1",
+    #   "licence_plate_rus_16stages": "Car number plate 1",
     "lowerbody": "Legs",
- #   "eye": "Eye 2",
- #   "eye_tree_eyeglasses": "Glasses",
+    #   "eye": "Eye 2",
+    #   "eye_tree_eyeglasses": "Glasses",
     "profileface": "Face 5",
- #   "righteye_2splits": "Eye 3",
- #   "russian_plate_number": "Car number plate 2",
- #   "smile": "Smile",
- #   "upperbody": "Torso"
+    #   "righteye_2splits": "Eye 3",
+    #   "russian_plate_number": "Car number plate 2",
+    #   "smile": "Smile",
+    #   "upperbody": "Torso"
 }
 
 unpaused = Event()
@@ -232,6 +232,7 @@ class VideoFrame(object):
         self.contours = None
         self.frame_delta: np_ndarray = None
         self.gray: np_ndarray = None
+        self.big_gray: np_ndarray = None
         self.thresh: np_ndarray = None
         self.blur: np_ndarray = None
 
@@ -685,13 +686,13 @@ class VideoMotion(object):
 
         self.log.debug(str(self.cascades))
 
-        frame.big_gray = imutils.resize(cv2.cvtColor(frame.raw, cv2.COLOR_BGR2GRAY), width=500) # TODO: take as a parameter
+        frame.big_gray = imutils.resize(cv2.cvtColor(frame.raw, cv2.COLOR_BGR2GRAY), width=500)     # TODO: take as a parameter
 
         for title, cascade in self.cascades.items():
             self.log.debug('Looking for {}'.format(title))
             if title not in self.last_objects:
                 self.last_objects[title] = []
-            found = cascade.detectMultiScale(frame.big_gray, scaleFactor=1.1, minNeighbors=5)  # TODO: take scaleFactor and minNeighbours as parameters
+            found = cascade.detectMultiScale(frame.big_gray, scaleFactor=1.1, minNeighbors=5)       # TODO: take scaleFactor and minNeighbours as parameters
             self.last_objects[title].extend(found)
             self.draw_objects(frame)
 
@@ -703,7 +704,7 @@ class VideoMotion(object):
                 area = VideoMotion.make_area(rect)
 
                 if self.show:
-                    scaled_area = self.scale_area(area, self.frame_width/500) # TODO: take as a parameter
+                    scaled_area = self.scale_area(area, self.frame_width / 500)       # TODO: take as a parameter
                     cv2.rectangle(frame.frame, *scaled_area, RED, 3)
                     cv2.putText(frame.frame,
                                 title,
@@ -1063,7 +1064,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typin
     pool.terminate()
 
 
-def run_map(job: typing.Callable, files: typing.Iterable[str],  pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.TextIO=None) -> None:
+def run_map(job: typing.Callable, files: typing.Iterable[str], pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.TextIO=None) -> None:
     if not files:
         raise ValueError('More than 0 files needed')
 
