@@ -62,6 +62,7 @@ from numpy import ndarray as np_ndarray
 
 import cv2
 import imutils
+import cvlib as cv
 
 
 # pylint: disable=invalid-name
@@ -229,12 +230,12 @@ class VideoFrame(object):
         self.raw: np_ndarray = frame
         self.frame: np_ndarray = self.raw.copy()    # TODO: work out how to remove this if show is False and still have things work
         self.in_cache: bool = False
-        self.contours = None
+        self.contours: typing.List = []
         self.frame_delta: np_ndarray = None
         self.gray: np_ndarray = None
-        self.big_gray: np_ndarray = None
         self.thresh: np_ndarray = None
         self.blur: np_ndarray = None
+        self.resized: np_ndarray = None
 
 
     def diff(self, ref_frame) -> None:
@@ -258,9 +259,15 @@ class VideoFrame(object):
         # dilate the thresholded image to fill in holes, then find contours
         # on thresholded image
         self.thresh = cv2.dilate(self.thresh, kernel=None, iterations=2)
-        cnts = cv2.findContours(self.thresh.copy(), mode=cv2.RETR_EXTERNAL,
-                                method=cv2.CHAIN_APPROX_SIMPLE)
-        cnts = cnts[0] if imutils.is_cv2() else cnts[1]
+
+        try:
+            cnts, hierarchy = cv2.findContours(
+                self.thresh, mode=cv2.RETR_EXTERNAL,
+                method=cv2.CHAIN_APPROX_SIMPLE
+            )[-2:]
+        except Exception as e:
+            log.error(str(e))
+            return
         self.contours = cnts
 
 
@@ -292,7 +299,8 @@ class VideoMotion(object):
                  codec: str='MJPG', log_level: int=logging.INFO,
                  mem: bool=False, cleanup: bool=False,
                  multiprocess: bool=False,
-                 cascades: typing.List[str]=None) -> None:
+                 cascades: typing.List[str]=None,
+                 yolo_tiny: bool=False) -> None:
         self.filename = filename
 
         if self.filename is None:
@@ -337,6 +345,7 @@ class VideoMotion(object):
         self.cascades: typing.Dict[str, typing.Any] = None
         self._load_cascades()
         self.log.debug(str(self.cascades))
+        self.tiny = yolo_tiny
 
         self.log.debug(self.codec)
 
@@ -554,10 +563,14 @@ class VideoMotion(object):
                             del frame
 
                 self.frame_cache.clear()
+
+            objects = self.find_objects()
+            if objects is not None and objects:
+                self.log.debug("Saw {} in motion".format(objects))
+
             # draw the text and identify objects
             if self.show:
                 self.draw_text()
-                self.find_objects()
 
             self.log.debug('Outputting frame')
 
@@ -648,11 +661,17 @@ class VideoMotion(object):
         self.movement = False
         self.movement_decay -= 1 if self.movement_decay > 0 else 0
 
-        if frame.contours:
+        if frame.contours is not None and len(frame.contours) > 0:
             # loop over the contours
             for contour in frame.contours:
                 # if the contour is too small, ignore it
-                if self.max_area < cv2.contourArea(contour) < self.min_area:
+                try:
+                    area = cv2.contourArea(contour)
+                except Exception as e:
+                    self.log.error(str(e))
+                    continue
+
+                if self.max_area < area < self.min_area:
                     continue
 
                 # compute the bounding box for the contour, draw it on the frame,
@@ -671,13 +690,16 @@ class VideoMotion(object):
         return
 
 
-    def find_objects(self, frame: VideoFrame=None) -> None:
+    def find_objects(self, frame: VideoFrame=None) -> typing.Set[str]:
         frame = self.current_frame if frame is None else frame
+
+        frame.resized = imutils.resize(frame.raw, width=300)     # TODO: take as a parameter
 
         self.object_counter += 1
         if self.object_counter != 10:    # TODO: take as a parameter
-            self.draw_objects(frame)
-            return
+            if self.show:
+                self.draw_objects(frame.frame, self.frame_width / 300.0)
+            return set()
         self.object_counter = 0
 
         self.log.debug('Looking for objects')
@@ -686,29 +708,42 @@ class VideoMotion(object):
 
         self.log.debug(str(self.cascades))
 
-        frame.big_gray = imutils.resize(cv2.cvtColor(frame.raw, cv2.COLOR_BGR2GRAY), width=500)     # TODO: take as a parameter
-
+        # with opencv cascades
         for title, cascade in self.cascades.items():
             self.log.debug('Looking for {}'.format(title))
-            if title not in self.last_objects:
-                self.last_objects[title] = []
-            found = cascade.detectMultiScale(frame.big_gray, scaleFactor=1.1, minNeighbors=5)       # TODO: take scaleFactor and minNeighbours as parameters
-            self.last_objects[title].extend(found)
-            self.draw_objects(frame)
+            found = cascade.detectMultiScale(frame.resized, scaleFactor=1.1, minNeighbors=5)       # TODO: take scaleFactor and minNeighbours as parameters
+            if len(found) > 0:
+                if title not in self.last_objects:
+                    self.last_objects[title] = []
+                for rect in found:
+                    area = VideoMotion.make_area_from_rect(rect)
+                    self.last_objects[title].append(area)
+
+        # with cvlib
+        self.log.debug('Common objects')
+        bboxes, labels, confs = cv.detect_common_objects(frame.resized, confidence=0.25, model='yolov3-tiny' if self.tiny else 'yolov3')
+        self.log.debug('Common objects: done')
+        cvlib_objects = list(zip(bboxes, labels))
+        for box, label in cvlib_objects:
+            if label not in self.last_objects:
+                self.last_objects[label] = []
+            self.last_objects[label].append(VideoMotion.make_area_from_box(tuple(box)))
+
+        if self.show:
+            self.draw_objects(frame.frame, self.frame_width / 300.0)
+
+        return set(self.last_objects.keys())
 
 
-    def draw_objects(self, frame) -> None:
-        for title, rects in self.last_objects.items():
-            for rect in rects:
-
-                area = VideoMotion.make_area(rect)
-
+    def draw_objects(self, image, scale) -> None:
+        for title, areas in self.last_objects.items():
+            for area in areas:
                 if self.show:
-                    scaled_area = self.scale_area(area, self.frame_width / 500)       # TODO: take as a parameter
-                    cv2.rectangle(frame.frame, *scaled_area, RED, 3)
-                    cv2.putText(frame.frame,
+                    scaled_area = self.scale_area(area, scale)
+                    cv2.rectangle(image, *scaled_area, RED, 3)
+                    cv2.putText(image,
                                 title,
-                                VideoMotion.find_centre(scaled_area),
+                                VideoMotion.find_centre(area),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.5, RED, 2
                                 )
@@ -743,11 +778,19 @@ class VideoMotion(object):
         Draw a green bounding box on the frame
         """
         frame = self.current_frame if frame is None else frame
-        return VideoMotion.make_area(cv2.boundingRect(contour))
+        return VideoMotion.make_area_from_rect(cv2.boundingRect(contour))
 
 
     @staticmethod
-    def make_area(object_tuple: typing.Tuple[int, int, int, int]) -> typing.Tuple[typing.Tuple[int, int], typing.Tuple[int, int]]:
+    def make_area_from_box(object_tuple: typing.Tuple[typing.Any, ...]) -> typing.Tuple[typing.Tuple[int, int], typing.Tuple[int, int]]:
+        # pylint: disable=invalid-name
+        (x1, y1, x2, y2) = object_tuple
+        area = ((x1, y1), (x2, y2))
+        return area
+
+
+    @staticmethod
+    def make_area_from_rect(object_tuple: typing.Tuple[int, int, int, int]) -> typing.Tuple[typing.Tuple[int, int], typing.Tuple[int, int]]:
         # pylint: disable=invalid-name
         (x, y, w, h) = object_tuple
         area = ((x, y), (x + w, y + h))
@@ -1167,7 +1210,7 @@ def main():
     """
     Main app entry point
     """
-    parser: ArgumentParser = ArgumentParser()
+    parser: ArgumentParser = ArgumentParser(description="Find motion and objects in video", epilog="Available specific object detection: {}".format(list(CASCADE_LOOKUP.keys())))
     get_args(parser)
     args: Namespace = parser.parse_args()
 
@@ -1264,7 +1307,7 @@ def run(args: Namespace, print_help: typing.Callable=lambda x: None) -> None:
                   blur_scale=args.blur_scale, box_size=args.box_size, min_box_scale=args.min_box_scale,
                   threshold=args.threshold, avg=args.avg,
                   fps=args.fps, min_time=args.mintime, cache_time=args.cachetime,
-                  multiprocess=args.processes > 1, cascades=args.object)
+                  multiprocess=args.processes > 1, cascades=args.cascade_object, yolo_tiny=args.yolo_tiny)
 
     try:
         if args.cameras:
@@ -1356,18 +1399,17 @@ def process_config(config_file: str, args: Namespace) -> Namespace:
     Read an INI style config
 
     TODO: apply argparse validation to the config values
-
-    TODO: replace any - with an _
     """
     config: ConfigParser = ConfigParser()
     config.read(config_file)
     for setting, value in config['settings'].items():
+        setting = setting.replace('-', '_')
         use_value: typing.Any = value
         if setting in ('processes', 'blur_scale', 'min_box_scale', 'threshold', 'fps', 'box_size'):
             use_value = int(value)
         if setting in ('mintime', 'cachetime', 'avg'):
             use_value = float(value)
-        if setting in ('mem', 'progress', 'debug', 'show', 'ignore_progress', 'ignore_drive'):
+        if setting in ('mem', 'progress', 'debug', 'show', 'ignore_progress', 'ignore_drive', 'yolo_tiny'):
             if value == 'True':
                 use_value = True
             elif value == 'False':
@@ -1404,7 +1446,8 @@ def get_args(parser: ArgumentParser) -> None:
     parser.add_argument('--masks', '-m', nargs='*', type=literal_eval, help='Areas to mask off in video')
     parser.add_argument('--masks_file', help='File holding mask coordinates (JSON)')
 
-    parser.add_argument('--object', '-O', nargs='*', type=str, help='Types of objects to detect')
+    parser.add_argument('--cascade-object', '-O', nargs='*', type=str, help='Specific types of objects to detect using haar cascades (slow!)')
+    parser.add_argument('--yolo-tiny', '-yt', action='store_true', help='Use fast common object detection')
 
     parser.add_argument('--blur-scale', '-b', type=int, default=20, help='Scale of gaussian blur size compared to video width (used as 1/blur_scale)')
     parser.add_argument('--box-size', '-B', type=int, default=100, help='Pixel size to scale the video to for processing')
