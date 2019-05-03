@@ -11,14 +11,15 @@ requirements = [
     'imutils',
     'numpy',
     'pynput',
+    'cvlib',
 ]
 
 setuptools.setup(
     name="find_motion",
-    version="0.0.2",
+    version="0.0.3",
     author="Aegilops",
     author_email="41705651+aegilops@users.noreply.github.com",
-    description="Processes video to detect motion, with tunable parameters",
+    description="Processes video to detect motion and objects, with tunable parameters",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/aegilops/find_motion",
