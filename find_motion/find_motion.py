@@ -743,7 +743,7 @@ class VideoMotion(object):
                     cv2.rectangle(image, *scaled_area, RED, 3)
                     cv2.putText(image,
                                 title,
-                                VideoMotion.find_centre(area),
+                                VideoMotion.find_centre(scaled_area),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.5, RED, 2
                                 )
