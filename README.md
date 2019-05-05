@@ -1,10 +1,10 @@
-# find_motion - Motion detection with OpenCV
+# find_motion - Motion and object detection with OpenCV
 
-Video processing Python 3 script to detect motion, with tunable parameters.
+Video processing Python 3 script to detect motion and objects, with tunable parameters.
 
 Caches images for a few frames before and after it detects movement.
 
-With much help from https://www.pyimagesearch.com/
+With much help from OpenCV, https://www.pyimagesearch.com/ and https://cvlib.net/.
 
 ## Usage
 
@@ -47,6 +47,8 @@ Input can come from a list of files, an input folder, or one or more cameras.
 
 Files are written to an output directory in 2GB sections.
 
+Progress is logged by default in `progress.log` in the output directory.
+
 ### Config file
 
 If you use a config file with `--config` then it takes an INI file format with a single `[settings]` section.
@@ -59,6 +61,6 @@ Use ```find_motion.py -h``` and ```pydoc3 find_motion.py``` to get more detailed
 
 ## Installing
 
-You can clone the repo and call ```find_motion.py``` directly. Use ```pip3 install -r requirements.txt``` to install dependencies.
+You can clone the repo and call ```./find_motion.py``` directly. Use ```pip3 install -r requirements.txt``` to install dependencies.
 
 To install as a module do ```pip3 install .``` in the repo directory.
