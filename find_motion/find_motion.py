@@ -368,6 +368,7 @@ class VideoMotion(object):
 
         self.object_counter: int = 0
         self.last_objects: typing.Dict[str, typing.List] = {}
+        self.seen_objects: typing.Set[str] = set()
 
         # Initialisation functions
         self._calc_min_area()
@@ -567,6 +568,7 @@ class VideoMotion(object):
             objects = self.find_objects()
             if objects is not None and objects:
                 self.log.debug("Saw {} in motion".format(objects))
+                self.seen_objects.update(objects)
 
             # draw the text and identify objects
             if self.show:
@@ -696,7 +698,7 @@ class VideoMotion(object):
         frame.resized = imutils.resize(frame.raw, width=300)     # TODO: take as a parameter
 
         self.object_counter += 1
-        if self.object_counter != 10:    # TODO: take as a parameter
+        if self.object_counter != 15:    # TODO: take as a parameter
             if self.show:
                 self.draw_objects(frame.frame, self.frame_width / 300.0)
             return set()
@@ -890,7 +892,7 @@ class VideoMotion(object):
         self.cleanup()
 #        self.frame_cache.clear()
 
-        return self.wrote_frames, self.err_msg
+        return self.wrote_frames, self.err_msg, tuple(self.seen_objects)
 
 
     def show_frames(self) -> None:
@@ -1015,23 +1017,25 @@ def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
         vid = VideoMotion(filename=filename, **kwargs)
         if vid.loaded:
             log.debug('Video loaded')
-            wrote_frames, err_msg = vid.find_motion()
+            wrote_frames, err_msg, seen_objects = vid.find_motion()
         else:
             wrote_frames = None
             err_msg = 'Video did not load successfully'
     except Exception as e:
         err_msg = 'Error processing video {}: {}'.format(filename, e)
         wrote_frames = None
-    return (wrote_frames, filename, err_msg)
+    return (wrote_frames, filename, err_msg, seen_objects)
 
 
 def get_progress(log_file: str) -> set:
     """
     Load the progress log file, get the list of files
+
+    Strip off any comment at the end of the filename
     """
     try:
         with open(log_file, 'r') as progress_log:
-            done_files = {f.strip() for f in progress_log.readlines()}
+            done_files = {f.split(' // ').strip() for f in progress_log.readlines()}
             return done_files
     except FileNotFoundError:
         return set()
@@ -1080,15 +1084,16 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typin
                         new = files_done.difference(files_written)
                         files_written.update(new)
 
-                        for wrote_frames, filename, err_msg in new:
-                            log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output)'))
+                        for wrote_frames, filename, err_msg, seen_objects in new:
+                            log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output)'))                        
 
                             if err_msg:
                                 log.error('Error processing {}: {}'.format(filename, err_msg))
+                                log.debug('Saw objects: {}'.format(seen_objects))
                                 num_err += 1
                             else:
                                 if progress_log is not None:
-                                    print(filename, file=progress_log)
+                                    print("{} // {}".format(filename, seen_objects), file=progress_log)
 
                             if wrote_frames:
                                 num_wrote += 1
@@ -1122,15 +1127,19 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar: typing.Unio
             on_press=on_press,
             on_release=on_release
         ) as listener:
-            for status, filename, err in files_processed:
+            for wrote_frames, filename, err_msg, seen_objects in files_processed:
                 if pbar is not None:
                     done += 1
                     pbar.update(done)
 
-                log.debug('Done {}{}'.format(filename, '' if status else ' (no output: {})'.format(err)))
+                log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output: {})'.format(err_msg)))
 
-                if status is not None:
-                    print(filename, file=progress_log)
+                if err_msg:
+                    log.error('Error processing {}: {}'.format(filename, err_msg))
+                    log.debug('Saw objects: {}'.format(seen_objects))
+                else:
+                    if progress_log is not None:
+                        print("{} // {}".format(filename, seen_objects), file=progress_log)
     except KeyboardInterrupt:
         log.warning('Ending processing at user request')
     listener.stop()
@@ -1170,11 +1179,12 @@ def run_stream(job: typing.Callable, processes: int, cameras: typing.List[int], 
                     new = files_done.difference(files_written)
                     files_written.update(new)
 
-                    for status, stream, err_msg in new:
+                    for status, stream, err_msg, seen_objects in new:
                         log.debug('Done {}{}'.format(stream, '' if status else ' (no output)'))
 
                         if err_msg:
                             log.error('Ended processing camera {}: {}'.format(stream, err_msg))
+                            log.debug('Saw objects: {}'.format(seen_objects))
 
                         print('Finished streaming from camera {}'.format(stream), file=progress_log)
 
@@ -1185,6 +1195,7 @@ def run_stream(job: typing.Callable, processes: int, cameras: typing.List[int], 
                 time.sleep(1)
         except KeyboardInterrupt:
             log.warning('Ending processing at user request')
+            # TODO: summarise output from streams effectively
 
         pool.terminate()
 
