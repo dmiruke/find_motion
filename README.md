@@ -8,6 +8,10 @@ With much help from OpenCV, https://www.pyimagesearch.com/ and https://cvlib.net
 
 ## Usage
 
+Use ```find_motion.py -h``` and ```pydoc3 find_motion.py``` to get detailed documentation.
+
+Hit ```alt```-```shift```-```pause``` to pause/unpause when using multiprocessing.
+
 ### Tuning
 
 To reduce false motion from shadows, wind movement, noise, sun glare and so on, you can control:
@@ -54,10 +58,6 @@ Progress is logged by default in `progress.log` in the output directory.
 If you use a config file with `--config` then it takes an INI file format with a single `[settings]` section.
 
 Use the same names as the optional arguments given in the help for the fields of the settings file.
-
-### Detailed usage
-
-Use ```find_motion.py -h``` and ```pydoc3 find_motion.py``` to get more detailed documentation.
 
 ## Installing
 

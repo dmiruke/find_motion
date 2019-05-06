@@ -1035,7 +1035,7 @@ def get_progress(log_file: str) -> set:
     """
     try:
         with open(log_file, 'r') as progress_log:
-            done_files = {f.split(' // ').strip() for f in progress_log.readlines()}
+            done_files = {f.split(' // ')[0].strip() for f in progress_log.readlines()}
             return done_files
     except FileNotFoundError:
         return set()
