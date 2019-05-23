@@ -51,7 +51,7 @@ from pynput import keyboard
 
 import logging
 import progressbar
-from DummyProgressBar import DummyProgressBar
+from .DummyProgressBar import DummyProgressBar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
@@ -1383,7 +1383,7 @@ def process_progress(files: OrderedSet, log_file: str, ignore_drive: bool=False)
     if not ignore_drive:
         files = OrderedSet([f for f in files if f[0] not in done_files])
     else:
-        files = OrderedSet([f for f in files if not map(lambda x: os.path.splitdrive(f[0])[1] == os.path.splitdrive(x), done_files)])
+        files = OrderedSet([f for f in files if not map(lambda x: os.path.splitdrive(x[0])[1] == os.path.splitdrive(x), done_files)])
     log.debug("{} files removed".format(str(found_files_num - len(files))))
     return files
 
