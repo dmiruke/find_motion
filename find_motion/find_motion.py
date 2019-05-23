@@ -51,7 +51,7 @@ from pynput import keyboard
 
 import logging
 import progressbar
-from .DummyProgressBar import DummyProgressBar
+from DummyProgressBar import DummyProgressBar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
