@@ -178,7 +178,7 @@ class VideoInfo(object):
     Class to read in a video, and get metadata out
     """
     def __init__(self, filename: str=None, log_level=logging.INFO) -> None:
-        self.filename: str = filename
+        self.filename: typing.Optional[str] = filename
         self.cap: cv2.VideoCapture = None
         self.amount_of_frames: int = 0
         self.frame_width: int = 0
@@ -333,7 +333,7 @@ class VideoMotion(object):
         self.avg: float = avg
         self.mask_areas: typing.List[typing.Any] = mask_areas if mask_areas is not None else []
         self.show: bool = show
-        self.cascade_names: typing.List[str] = cascades
+        self.cascade_names: typing.Optional[typing.List[str]] = cascades
 
         self.log.debug('Caching {} frames, min motion {} frames'.format(self.cache_frames, self.min_movement_frames))
 
@@ -342,7 +342,7 @@ class VideoMotion(object):
         self.mem: bool = mem
         self.cleanup_flag: bool = cleanup
 
-        self.cascades: typing.Dict[str, typing.Any] = None
+        self.cascades: typing.Optional[typing.Dict[str, typing.Any]] = None
         self._load_cascades()
         self.log.debug(str(self.cascades))
         self.tiny = yolo_tiny
@@ -356,10 +356,10 @@ class VideoMotion(object):
         self.scale: float = -1.0
 
         self.current_frame: VideoFrame
-        self.ref_frame: VideoFrame
+        self.ref_frame: typing.Optional[VideoFrame]
         self.frame_cache: typing.Deque[VideoFrame]
 
-        self.wrote_frames: bool = False
+        self.wrote_frames: typing.Optional[bool] = False
         self.err_msg: str = ''
 
         self.movement: bool = False
@@ -1041,7 +1041,7 @@ def get_progress(log_file: str) -> set:
         return set()
 
 
-def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.TextIO=None) -> None:
+def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.IO[str]=None) -> None:
     """
     Create and run a pool of workers
 
@@ -1085,7 +1085,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typin
                         files_written.update(new)
 
                         for wrote_frames, filename, err_msg, seen_objects in new:
-                            log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output)'))                        
+                            log.debug('Done {}{}'.format(filename, '' if wrote_frames else ' (no output)'))
 
                             if err_msg:
                                 log.error('Error processing {}: {}'.format(filename, err_msg))
@@ -1112,7 +1112,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typin
     pool.terminate()
 
 
-def run_map(job: typing.Callable, files: typing.Iterable[str], pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.TextIO=None) -> None:
+def run_map(job: typing.Callable, files: typing.Iterable[str], pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.IO[str]=None) -> None:
     if not files:
         raise ValueError('More than 0 files needed')
 
@@ -1145,7 +1145,7 @@ def run_map(job: typing.Callable, files: typing.Iterable[str], pbar: typing.Unio
     listener.stop()
 
 
-def run_stream(job: typing.Callable, processes: int, cameras: typing.List[int], progress_log: typing.TextIO=None) -> None:
+def run_stream(job: typing.Callable, processes: int, cameras: typing.List[int], progress_log: typing.IO[str]=None) -> None:
     if not cameras:
         raise ValueError('More than 0 cameras needed')
 
