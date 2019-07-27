@@ -8,9 +8,9 @@ With much help from OpenCV, https://www.pyimagesearch.com/ and https://cvlib.net
 
 ## Usage
 
-Use ```find_motion.py -h``` and ```pydoc3 find_motion.py``` to get detailed documentation.
+Use `find_motion.py -h` and `pydoc3 find_motion.py` to get detailed documentation.
 
-Hit ```alt```-```shift```-```pause``` to pause/unpause when using multiprocessing.
+Hit `alt`-`shift`-`pause` to pause/unpause when using multiprocessing.
 
 ### Tuning
 
@@ -61,6 +61,8 @@ Use the same names as the optional arguments given in the help for the fields of
 
 ## Installing
 
-You can clone the repo and call ```./find_motion.py``` directly. Use ```pip3 install -r requirements.txt``` to install dependencies.
+You can clone the repo and call `./find_motion.py` directly. Use `pip3 install -r requirements.txt` to install dependencies.
 
-To install as a module do ```pip3 install .``` in the repo directory.
+To install as a module do `pip3 install .` in the repo directory.
+
+If you get errors to do with progressbar, try uninstalling the `progressbar` module (`pip3 uninstall progressbar`) and reinstalling `progressbar2` (`pip3 install progressbar2`).
