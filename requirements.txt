@@ -6,3 +6,4 @@ imutils
 numpy
 pynput
 cvlib
+tensorflow

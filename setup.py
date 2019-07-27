@@ -12,6 +12,7 @@ requirements = [
     'numpy',
     'pynput',
     'cvlib',
+    'tensorflow',
 ]
 
 setuptools.setup(

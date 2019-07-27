@@ -51,10 +51,14 @@ from pynput import keyboard
 
 import logging
 import progressbar
+from progressbar import ProgressBar
 from DummyProgressBar import DummyProgressBar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
+
+import warnings
+warnings.filterwarnings("ignore", "Passing \(type, 1\) or '1type' as a synonym of type is deprecated", FutureWarning, ".*")
 
 from numpy import array as np_array
 from numpy import int32 as np_int32
@@ -1041,7 +1045,7 @@ def get_progress(log_file: str) -> set:
         return set()
 
 
-def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typing.Iterable[str]=None, pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.IO[str]=None) -> None:
+def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typing.Iterable[str]=None, pbar: typing.Union[ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.IO[str]=None) -> None:
     """
     Create and run a pool of workers
 
@@ -1112,7 +1116,7 @@ def run_pool(job: typing.Callable[..., typing.Any], processes: int, files: typin
     pool.terminate()
 
 
-def run_map(job: typing.Callable, files: typing.Iterable[str], pbar: typing.Union[progressbar.ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.IO[str]=None) -> None:
+def run_map(job: typing.Callable, files: typing.Iterable[str], pbar: typing.Union[ProgressBar, DummyProgressBar]=DUMMY_PROGRESS_BAR, progress_log: typing.IO[str]=None) -> None:
     if not files:
         raise ValueError('More than 0 files needed')
 
@@ -1249,7 +1253,7 @@ def make_progressbar(progress: bool=False, num_files: int=0) -> progressbar.Prog
     """
     Create progressbar
     """
-    return progressbar.ProgressBar(max_value=num_files,
+    return ProgressBar(max_value=num_files,
                                    redirect_stdout=True,
                                    redirect_stderr=True,
                                    widgets=make_pbar_widgets(num_files)
