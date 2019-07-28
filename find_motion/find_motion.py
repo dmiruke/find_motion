@@ -58,7 +58,7 @@ from mem_top import mem_top
 from orderedset import OrderedSet
 
 import warnings
-warnings.filterwarnings("ignore", "Passing \(type, 1\) or '1type' as a synonym of type is deprecated", FutureWarning, ".*")
+warnings.filterwarnings("ignore", r"Passing \(type, 1\) or '1type' as a synonym of type is deprecated", FutureWarning, ".*")
 
 from numpy import array as np_array
 from numpy import int32 as np_int32
@@ -174,7 +174,7 @@ class VideoError(Exception):
     """
     An error when processing a video
     """
-    def __init__(self, msg):
+    def __init__(self, _msg):
         super()
 
 
@@ -266,7 +266,7 @@ class VideoFrame(object):
         self.thresh = cv2.dilate(self.thresh, kernel=None, iterations=2)
 
         try:
-            cnts, hierarchy = cv2.findContours(
+            cnts, _hierarchy = cv2.findContours(
                 self.thresh, mode=cv2.RETR_EXTERNAL,
                 method=cv2.CHAIN_APPROX_SIMPLE
             )[-2:]
@@ -289,7 +289,6 @@ class VideoFrame(object):
             return
         if hasattr(self, 'raw'):
             del self.raw
-        del self
 
 
 class VideoMotion(object):
@@ -716,19 +715,20 @@ class VideoMotion(object):
         self.log.debug(str(self.cascades))
 
         # with opencv cascades
-        for title, cascade in self.cascades.items():
-            self.log.debug('Looking for {}'.format(title))
-            found = cascade.detectMultiScale(frame.resized, scaleFactor=1.1, minNeighbors=5)       # TODO: take scaleFactor and minNeighbours as parameters
-            if len(found) > 0:
-                if title not in self.last_objects:
-                    self.last_objects[title] = []
-                for rect in found:
-                    area = VideoMotion.make_area_from_rect(rect)
-                    self.last_objects[title].append(area)
+        if self.cascades is not None:
+            for title, cascade in self.cascades.items():
+                self.log.debug('Looking for {}'.format(title))
+                found = cascade.detectMultiScale(frame.resized, scaleFactor=1.1, minNeighbors=5)       # TODO: take scaleFactor and minNeighbours as parameters
+                if len(found) > 0:
+                    if title not in self.last_objects:
+                        self.last_objects[title] = []
+                    for rect in found:
+                        area = VideoMotion.make_area_from_rect(rect)
+                        self.last_objects[title].append(area)
 
-        # with cvlib
+        # with cvlib, using yolov3
         self.log.debug('Common objects')
-        bboxes, labels, confs = cv.detect_common_objects(frame.resized, confidence=0.25, model='yolov3-tiny' if self.tiny else 'yolov3')
+        bboxes, labels, _confs = cv.detect_common_objects(frame.resized, confidence=0.25, model='yolov3-tiny' if self.tiny else 'yolov3')
         self.log.debug('Common objects: done')
         cvlib_objects = list(zip(bboxes, labels))
         for box, label in cvlib_objects:
@@ -926,7 +926,7 @@ def find_files(directory: str) -> typing.List[str]:
     """
     Finds files in the directory, recursively, sorts them by last modified time
     """
-    return [os.path.normpath(os.path.abspath(os.path.join(dirpath, f))) for dirpath, dnames, fnames in os.walk(directory) for f in fnames if f != 'progress.log'] if directory is not None else []
+    return [os.path.normpath(os.path.abspath(os.path.join(dirpath, f))) for dirpath, _dnames, fnames in os.walk(directory) for f in fnames if f != 'progress.log'] if directory is not None else []
 
 
 def verify_files(file_list: typing.List[str]) -> typing.List[str]:
@@ -1025,6 +1025,7 @@ def run_vid(filename: typing.Union[str, int], **kwargs) -> tuple:
             wrote_frames, err_msg, seen_objects = vid.find_motion()
         else:
             wrote_frames = None
+            seen_objects = None
             err_msg = 'Video did not load successfully'
     except Exception as e:
         err_msg = 'Error processing video {}: {}'.format(filename, e)
@@ -1250,15 +1251,15 @@ def make_pbar_widgets(num_files: int) -> list:
     ]
 
 
-def make_progressbar(progress: bool=False, num_files: int=0) -> progressbar.ProgressBar:
+def make_progressbar(progress: bool=False, num_files: int=0) -> ProgressBar:
     """
     Create progressbar
     """
     return ProgressBar(max_value=num_files,
-                                   redirect_stdout=True,
-                                   redirect_stderr=True,
-                                   widgets=make_pbar_widgets(num_files)
-                                   ) if progress else DUMMY_PROGRESS_BAR
+                       redirect_stdout=True,
+                       redirect_stderr=True,
+                       widgets=make_pbar_widgets(num_files)
+                       ) if progress else DUMMY_PROGRESS_BAR
 
 
 def read_masks(masks_file: str) -> list:
