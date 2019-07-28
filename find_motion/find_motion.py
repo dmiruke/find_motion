@@ -52,7 +52,7 @@ from pynput import keyboard
 import logging
 import progressbar
 from progressbar import ProgressBar
-from DummyProgressBar import DummyProgressBar
+from .DummyProgressBar import DummyProgressBar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
@@ -644,18 +644,22 @@ class VideoMotion(object):
         Update the moving average
         """
         frame = self.current_frame if frame is None else frame
-        if self.ref_frame is None:
-            self.ref_frame = frame.blur.copy().astype("float")
 
-        # compute the absolute difference between the current frame and ref frame
-        frame.diff(self.ref_frame)
-        frame.threshold(self.delta_thresh)
+        if frame.blur is None:
+            raise Exception("Blur frame is None")
+        else:
+            if self.ref_frame is None:
+                self.ref_frame = frame.blur.copy().astype("float") # pytype: disable=attribute-error
 
-        # update reference frame using weighted average
-        cv2.accumulateWeighted(frame.blur, self.ref_frame, self.avg)
+            # compute the absolute difference between the current frame and ref frame
+            frame.diff(self.ref_frame)
+            frame.threshold(self.delta_thresh)
 
-        # find contours from the diff data
-        frame.find_contours()
+            # update reference frame using weighted average
+            cv2.accumulateWeighted(frame.blur, self.ref_frame, self.avg)
+
+            # find contours from the diff data
+            frame.find_contours()
 
 
     def find_movement(self, frame: VideoFrame=None) -> None:
