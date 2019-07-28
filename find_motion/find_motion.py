@@ -700,15 +700,15 @@ class VideoMotion(object):
         return
 
 
-    def find_objects(self, frame: VideoFrame=None) -> typing.Set[str]:
+    def find_objects(self, frame: VideoFrame=None, width=300, skip=15, scaleFactor=1.1, minNeighbours=5, confidence=0.25) -> typing.Set[str]:
         frame = self.current_frame if frame is None else frame
 
-        frame.resized = imutils.resize(frame.raw, width=300)     # TODO: take as a parameter
+        frame.resized = imutils.resize(frame.raw, width=width)
 
         self.object_counter += 1
-        if self.object_counter != 15:    # TODO: take as a parameter
+        if self.object_counter != skip:
             if self.show:
-                self.draw_objects(frame.frame, self.frame_width / 300.0)
+                self.draw_objects(frame.frame, self.frame_width / float(width))
             return set()
         self.object_counter = 0
 
@@ -722,7 +722,7 @@ class VideoMotion(object):
         if self.cascades is not None:
             for title, cascade in self.cascades.items():
                 self.log.debug('Looking for {}'.format(title))
-                found = cascade.detectMultiScale(frame.resized, scaleFactor=1.1, minNeighbors=5)       # TODO: take scaleFactor and minNeighbours as parameters
+                found = cascade.detectMultiScale(frame.resized, scaleFactor=scaleFactor, minNeighbors=minNeighbours)
                 if len(found) > 0:
                     if title not in self.last_objects:
                         self.last_objects[title] = []
@@ -732,7 +732,7 @@ class VideoMotion(object):
 
         # with cvlib, using yolov3
         self.log.debug('Common objects')
-        bboxes, labels, _confs = cv.detect_common_objects(frame.resized, confidence=0.25, model='yolov3-tiny' if self.tiny else 'yolov3')
+        bboxes, labels, _confs = cv.detect_common_objects(frame.resized, confidence=confidence, model='yolov3-tiny' if self.tiny else 'yolov3')
         self.log.debug('Common objects: done')
         cvlib_objects = list(zip(bboxes, labels))
         for box, label in cvlib_objects:
@@ -741,7 +741,7 @@ class VideoMotion(object):
             self.last_objects[label].append(VideoMotion.make_area_from_box(tuple(box)))
 
         if self.show:
-            self.draw_objects(frame.frame, self.frame_width / 300.0)
+            self.draw_objects(frame.frame, self.frame_width / float(width))
 
         return set(self.last_objects.keys())
 
