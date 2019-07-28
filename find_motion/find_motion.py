@@ -52,7 +52,7 @@ from pynput import keyboard
 import logging
 import progressbar
 from progressbar import ProgressBar
-from .DummyProgressBar import DummyProgressBar
+from DummyProgressBar import DummyProgressBar
 
 from mem_top import mem_top
 from orderedset import OrderedSet
@@ -569,7 +569,7 @@ class VideoMotion(object):
 
                 self.frame_cache.clear()
 
-            objects = self.find_objects()
+            objects = self.find_objects()   # TODO: pass args to set params
             if objects is not None and objects:
                 self.log.debug("Saw {} in motion".format(objects))
                 self.seen_objects.update(objects)
@@ -649,7 +649,7 @@ class VideoMotion(object):
             raise Exception("Blur frame is None")
         else:
             if self.ref_frame is None:
-                self.ref_frame = frame.blur.copy().astype("float") # pytype: disable=attribute-error
+                self.ref_frame = frame.blur.copy().astype("float")  # pytype: disable=attribute-error
 
             # compute the absolute difference between the current frame and ref frame
             frame.diff(self.ref_frame)
