@@ -1,4 +1,4 @@
-all: flake8 mypy bandit diatra safety vulture
+all: flake8 mypy bandit diatra safety vulture pyright
 
 flake8:
 	flake8 --ignore=E501,E303,E402,E252
@@ -18,4 +18,7 @@ safety:
 vulture:
 	vulture .
 
-.PHONY: flake8 mypy all bandit diatra safety vulture
+pyright:
+	pyright
+
+.PHONY: flake8 mypy all bandit diatra safety vulture pyright
