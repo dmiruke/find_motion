@@ -162,7 +162,8 @@ def on_press(key: keyboard.Key) -> bool:
 
 def on_release(key: keyboard.Key) -> bool:
     log.debug(str(key) + ' up')
-    HELD.remove(key)
+    if key in HELD:
+        HELD.remove(key)
     if key == keyboard.Key.esc:
         # Stop listener
         return False
