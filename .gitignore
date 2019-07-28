@@ -5,3 +5,5 @@
 *.lnk
 .pyre
 .pyre_configuration
+.pytype
+.pytype/**
