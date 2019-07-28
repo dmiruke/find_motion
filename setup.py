@@ -13,6 +13,7 @@ requirements = [
     'pynput',
     'cvlib',
     'tensorflow',
+    'jsonschema'
 ]
 
 setuptools.setup(
